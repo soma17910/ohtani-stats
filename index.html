@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>大谷翔平 スタッツトラッカー</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page:           #f9f9f7;
+    --surface-1:      #fcfcfb;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --grid:           #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --series-1:       #2a78d6;
+    --series-1-wash:  rgba(42,120,214,0.10);
+    --good:           #006300;
+    --live:           #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page:           #0d0d0d;
+      --surface-1:      #1a1a19;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --grid:           #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --series-1:       #3987e5;
+      --series-1-wash:  rgba(57,135,229,0.12);
+      --good:           #0ca30c;
+      --live:           #e66767;
+    }
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+    background: var(--page);
+    color: var(--text-primary);
+    line-height: 1.5;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 24px 20px 56px; }
+
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; margin-bottom: 6px; }
+  header h1 { font-size: 26px; font-weight: 700; }
+  .sub { color: var(--text-secondary); font-size: 14px; }
+  .toolbar { display: flex; align-items: center; gap: 12px; margin: 10px 0 22px; flex-wrap: wrap; }
+  .toolbar .stamp { color: var(--text-muted); font-size: 13px; }
+  button.refresh {
+    font: inherit; font-size: 13px; font-weight: 600;
+    color: var(--text-primary); background: var(--surface-1);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 14px; cursor: pointer;
+  }
+  button.refresh:hover { border-color: var(--baseline); }
+  button.refresh:disabled { opacity: .5; cursor: default; }
+
+  .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  .card h2 { font-size: 15px; font-weight: 700; margin-bottom: 14px; }
+  .card h2 .en { color: var(--text-muted); font-weight: 500; font-size: 12px; margin-left: 8px; }
+
+  /* game banner */
+  #gameCard .matchup { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  #gameCard .score { font-size: 30px; font-weight: 600; }
+  #gameCard .teams { font-size: 15px; color: var(--text-secondary); }
+  .badge {
+    display: inline-block; font-size: 12px; font-weight: 700;
+    padding: 2px 10px; border-radius: 999px;
+    border: 1px solid var(--border); color: var(--text-secondary);
+  }
+  .badge.live { color: var(--live); border-color: currentColor; }
+
+  /* stat tiles */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 10px; }
+  .tile { padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; }
+  .tile .label { font-size: 12px; color: var(--text-muted); }
+  .tile .value { font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
+  .tile .hint { font-size: 11px; color: var(--text-muted); }
+
+  .hero { display: flex; gap: 28px; flex-wrap: wrap; margin-bottom: 16px; }
+  .hero .value { font-size: 48px; font-weight: 600; line-height: 1.1; }
+  .hero .label { font-size: 13px; color: var(--text-secondary); }
+
+  /* chart */
+  .chart-box { position: relative; }
+  .chart-box svg { display: block; width: 100%; height: auto; }
+  .tooltip {
+    position: absolute; pointer-events: none; display: none;
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 10px; font-size: 12px;
+    color: var(--text-secondary); box-shadow: 0 2px 8px rgba(0,0,0,.12);
+    white-space: nowrap; z-index: 5;
+  }
+  .tooltip b { color: var(--text-primary); }
+
+  /* tables */
+  .table-scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th {
+    text-align: right; font-weight: 600; color: var(--text-muted);
+    padding: 6px 10px; border-bottom: 1px solid var(--baseline); white-space: nowrap;
+  }
+  th:first-child, td:first-child, th.l, td.l { text-align: left; }
+  td {
+    text-align: right; padding: 6px 10px;
+    border-bottom: 1px solid var(--grid); white-space: nowrap;
+    font-variant-numeric: tabular-nums; color: var(--text-primary);
+  }
+  td.dim { color: var(--text-secondary); }
+  tr:last-child td { border-bottom: none; }
+
+  .error {
+    color: var(--live); font-size: 14px; padding: 12px 0;
+  }
+  .loading { color: var(--text-muted); font-size: 14px; }
+  footer { color: var(--text-muted); font-size: 12px; margin-top: 8px; }
+  footer a { color: inherit; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>大谷翔平</h1>
+    <span class="sub" id="playerMeta">Shohei Ohtani</span>
+  </header>
+  <div class="toolbar">
+    <button class="refresh" id="refreshBtn">↻ 今すぐ更新</button>
+    <span class="stamp" id="stamp">読み込み中…</span>
+    <span class="stamp">60秒ごとに自動更新</span>
+  </div>
+
+  <div class="card" id="gameCard" hidden>
+    <h2>直近の試合<span class="en">GAME</span></h2>
+    <div class="matchup" id="gameBody"></div>
+  </div>
+
+  <div class="card">
+    <h2 id="hitTitle">打撃成績<span class="en">HITTING</span></h2>
+    <div class="hero" id="hitHero"></div>
+    <div class="tiles" id="hitTiles"><span class="loading">読み込み中…</span></div>
+  </div>
+
+  <div class="card">
+    <h2 id="pitTitle">投手成績<span class="en">PITCHING</span></h2>
+    <div class="hero" id="pitHero"></div>
+    <div class="tiles" id="pitTiles"><span class="loading">読み込み中…</span></div>
+  </div>
+
+  <div class="card">
+    <h2>本塁打数の推移(累計)<span class="en">CUMULATIVE HR</span></h2>
+    <div class="chart-box" id="hrChart"><span class="loading">読み込み中…</span></div>
+  </div>
+
+  <div class="card">
+    <h2>直近10試合(打撃)<span class="en">LAST 10 GAMES</span></h2>
+    <div class="table-scroll" id="hitLog"><span class="loading">読み込み中…</span></div>
+  </div>
+
+  <div class="card">
+    <h2>直近5登板(投手)<span class="en">LAST 5 STARTS</span></h2>
+    <div class="table-scroll" id="pitLog"><span class="loading">読み込み中…</span></div>
+  </div>
+
+  <footer>データ提供: <a href="https://statsapi.mlb.com" target="_blank" rel="noopener">MLB Stats API</a>(非公式利用)。表示は自動更新されます。</footer>
+</div>
+
+<script>
+const API = "https://statsapi.mlb.com/api/v1";
+const PLAYER_ID = 660271; // Shohei Ohtani
+const REFRESH_MS = 60_000;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+async function fetchJSON(url) {
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${url}`);
+  return res.json();
+}
+
+function fmtDateISO(d) {
+  const p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+// --- season resolution: use current year, fall back to previous if empty ---
+async function resolveSeasonData() {
+  const year = new Date().getFullYear();
+  for (const season of [year, year - 1]) {
+    const url = `${API}/people/${PLAYER_ID}?hydrate=stats(group=[hitting,pitching],type=[season],season=${season}),currentTeam`;
+    const data = await fetchJSON(url);
+    const person = data.people?.[0];
+    const hasStats = person?.stats?.some(s => s.splits?.length);
+    if (hasStats) return { season, person };
+  }
+  throw new Error("シーズン成績が取得できませんでした");
+}
+
+function splitStat(person, group) {
+  const entry = person.stats?.find(s => s.group?.displayName === group);
+  return entry?.splits?.[0]?.stat ?? null;
+}
+
+function tile(label, value, hint) {
+  return `<div class="tile"><div class="label">${esc(label)}</div><div class="value">${esc(value)}</div>${hint ? `<div class="hint">${esc(hint)}</div>` : ""}</div>`;
+}
+function heroFig(label, value) {
+  return `<div><div class="value">${esc(value)}</div><div class="label">${esc(label)}</div></div>`;
+}
+
+function renderHitting(stat, season) {
+  $("hitTitle").innerHTML = `打撃成績 ${season}<span class="en">HITTING</span>`;
+  if (!stat) { $("hitHero").innerHTML = ""; $("hitTiles").innerHTML = `<span class="loading">データなし</span>`; return; }
+  $("hitHero").innerHTML = heroFig("本塁打", stat.homeRuns);
+  $("hitTiles").innerHTML = [
+    tile("打率", stat.avg),
+    tile("打点", stat.rbi),
+    tile("OPS", stat.ops),
+    tile("出塁率", stat.obp),
+    tile("長打率", stat.slg),
+    tile("安打", stat.hits),
+    tile("得点", stat.runs),
+    tile("盗塁", stat.stolenBases),
+    tile("四球", stat.baseOnBalls),
+    tile("三振", stat.strikeOuts),
+    tile("試合", stat.gamesPlayed),
+    tile("打席", stat.plateAppearances),
+  ].join("");
+}
+
+function renderPitching(stat, season) {
+  $("pitTitle").innerHTML = `投手成績 ${season}<span class="en">PITCHING</span>`;
+  if (!stat) { $("pitHero").innerHTML = ""; $("pitTiles").innerHTML = `<span class="loading">データなし</span>`; return; }
+  $("pitHero").innerHTML = heroFig("防御率", stat.era);
+  $("pitTiles").innerHTML = [
+    tile("勝敗", `${stat.wins}勝${stat.losses}敗`),
+    tile("奪三振", stat.strikeOuts),
+    tile("投球回", stat.inningsPitched),
+    tile("WHIP", stat.whip),
+    tile("K/9", stat.strikeoutsPer9Inn),
+    tile("被打率", stat.avg),
+    tile("与四球", stat.baseOnBalls),
+    tile("先発", stat.gamesStarted),
+  ].join("");
+}
+
+// --- team abbreviation map (opponent names -> AZ, SD, ...) ---
+let teamAbbr = null;
+async function loadTeamAbbr(season) {
+  if (teamAbbr) return;
+  try {
+    const data = await fetchJSON(`${API}/teams?sportId=1&season=${season}`);
+    teamAbbr = Object.fromEntries((data.teams ?? []).map(t => [t.id, t.abbreviation]));
+  } catch { teamAbbr = {}; }
+}
+const oppLabel = s =>
+  s.opponent?.abbreviation ?? teamAbbr?.[s.opponent?.id] ?? s.opponent?.name ?? "";
+
+// --- game logs ---
+async function loadGameLogs(season) {
+  const [hit, pit] = await Promise.all([
+    fetchJSON(`${API}/people/${PLAYER_ID}/stats?stats=gameLog&group=hitting&season=${season}`),
+    fetchJSON(`${API}/people/${PLAYER_ID}/stats?stats=gameLog&group=pitching&season=${season}`),
+  ]);
+  return {
+    hitting: hit.stats?.[0]?.splits ?? [],
+    pitching: pit.stats?.[0]?.splits ?? [],
+  };
+}
+
+const shortDate = iso => {
+  const [, m, d] = iso.split("-");
+  return `${Number(m)}/${Number(d)}`;
+};
+
+function renderHitLog(splits) {
+  const rows = splits.slice(-10).reverse();
+  if (!rows.length) { $("hitLog").innerHTML = `<span class="loading">データなし</span>`; return; }
+  $("hitLog").innerHTML = `<table>
+    <thead><tr><th class="l">日付</th><th class="l">対戦</th><th>打数</th><th>安打</th><th>本塁打</th><th>打点</th><th>四球</th><th>三振</th><th>盗塁</th></tr></thead>
+    <tbody>${rows.map(s => `<tr>
+      <td class="l dim">${esc(shortDate(s.date))}</td>
+      <td class="l dim">${s.isHome ? "vs" : "@"} ${esc(oppLabel(s))}</td>
+      <td>${s.stat.atBats}</td><td>${s.stat.hits}</td>
+      <td>${s.stat.homeRuns > 0 ? `<b>${s.stat.homeRuns}</b>` : s.stat.homeRuns}</td>
+      <td>${s.stat.rbi}</td><td>${s.stat.baseOnBalls}</td><td>${s.stat.strikeOuts}</td><td>${s.stat.stolenBases}</td>
+    </tr>`).join("")}</tbody></table>`;
+}
+
+function renderPitLog(splits) {
+  const rows = splits.slice(-5).reverse();
+  if (!rows.length) { $("pitLog").innerHTML = `<span class="loading">データなし</span>`; return; }
+  $("pitLog").innerHTML = `<table>
+    <thead><tr><th class="l">日付</th><th class="l">対戦</th><th>投球回</th><th>失点</th><th>自責</th><th>奪三振</th><th>与四球</th><th>被安打</th><th>結果</th></tr></thead>
+    <tbody>${rows.map(s => `<tr>
+      <td class="l dim">${esc(shortDate(s.date))}</td>
+      <td class="l dim">${s.isHome ? "vs" : "@"} ${esc(oppLabel(s))}</td>
+      <td>${esc(s.stat.inningsPitched)}</td><td>${s.stat.runs}</td><td>${s.stat.earnedRuns}</td>
+      <td>${s.stat.strikeOuts}</td><td>${s.stat.baseOnBalls}</td><td>${s.stat.hits}</td>
+      <td class="dim">${s.stat.wins > 0 ? "勝" : s.stat.losses > 0 ? "敗" : "—"}</td>
+    </tr>`).join("")}</tbody></table>`;
+}
+
+// --- cumulative HR chart (single series, 2px line, hover tooltip) ---
+function renderHRChart(splits) {
+  const box = $("hrChart");
+  if (!splits.length) { box.innerHTML = `<span class="loading">データなし</span>`; return; }
+  const pts = [];
+  let total = 0;
+  splits.forEach((s, i) => { total += s.stat.homeRuns ?? 0; pts.push({ g: i + 1, hr: total, date: s.date }); });
+
+  const W = 960, H = 260, padL = 36, padR = 16, padT = 12, padB = 28;
+  const maxHR = Math.max(4, total);
+  const x = g => padL + (g - 1) / Math.max(1, pts.length - 1) * (W - padL - padR);
+  const y = v => H - padB - v / maxHR * (H - padT - padB);
+
+  const yTicks = [];
+  const step = maxHR <= 10 ? 2 : maxHR <= 30 ? 5 : 10;
+  for (let v = 0; v <= maxHR; v += step) yTicks.push(v);
+
+  const path = pts.map((p, i) => `${i ? "L" : "M"}${x(p.g).toFixed(1)},${y(p.hr).toFixed(1)}`).join("");
+  const area = `${path}L${x(pts[pts.length - 1].g).toFixed(1)},${y(0)}L${x(1).toFixed(1)},${y(0)}Z`;
+  const last = pts[pts.length - 1];
+
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="本塁打数の累計推移">
+    ${yTicks.map(v => `<line x1="${padL}" y1="${y(v)}" x2="${W - padR}" y2="${y(v)}" stroke="var(--grid)" stroke-width="1"/>
+      <text x="${padL - 8}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="var(--text-muted)" font-variant-numeric="tabular-nums">${v}</text>`).join("")}
+    <line x1="${padL}" y1="${y(0)}" x2="${W - padR}" y2="${y(0)}" stroke="var(--baseline)" stroke-width="1"/>
+    <path d="${area}" fill="var(--series-1-wash)"/>
+    <path d="${path}" fill="none" stroke="var(--series-1)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${x(last.g)}" cy="${y(last.hr)}" r="4" fill="var(--series-1)" stroke="var(--surface-1)" stroke-width="2"/>
+    <text x="${Math.min(x(last.g) + 8, W - 30)}" y="${Math.max(y(last.hr) - 8, 12)}" font-size="12" font-weight="600" fill="var(--text-primary)">${last.hr}本</text>
+    <text x="${padL}" y="${H - 8}" font-size="11" fill="var(--text-muted)">開幕</text>
+    <text x="${W - padR}" y="${H - 8}" text-anchor="end" font-size="11" fill="var(--text-muted)">${pts.length}試合目</text>
+    <line id="xhair" x1="0" y1="${padT}" x2="0" y2="${y(0)}" stroke="var(--baseline)" stroke-width="1" visibility="hidden"/>
+    <circle id="xdot" r="4" fill="var(--series-1)" stroke="var(--surface-1)" stroke-width="2" visibility="hidden"/>
+    <rect x="${padL}" y="${padT}" width="${W - padL - padR}" height="${H - padT - padB}" fill="transparent" id="hitArea"/>
+  </svg><div class="tooltip" id="hrTip"></div>`;
+
+  const svg = box.querySelector("svg");
+  const tip = $("hrTip"), xhair = box.querySelector("#xhair"), xdot = box.querySelector("#xdot");
+  const hitArea = box.querySelector("#hitArea");
+  hitArea.addEventListener("mousemove", ev => {
+    const rect = svg.getBoundingClientRect();
+    const sx = (ev.clientX - rect.left) * (W / rect.width);
+    const g = Math.round((sx - padL) / (W - padL - padR) * (pts.length - 1)) + 1;
+    const p = pts[Math.min(Math.max(g, 1), pts.length) - 1];
+    xhair.setAttribute("x1", x(p.g)); xhair.setAttribute("x2", x(p.g));
+    xhair.setAttribute("visibility", "visible");
+    xdot.setAttribute("cx", x(p.g)); xdot.setAttribute("cy", y(p.hr));
+    xdot.setAttribute("visibility", "visible");
+    tip.style.display = "block";
+    tip.innerHTML = `${esc(shortDate(p.date))} ・ ${p.g}試合目<br><b>累計 ${p.hr} 本塁打</b>`;
+    const bx = box.getBoundingClientRect();
+    let left = ev.clientX - bx.left + 14;
+    if (left + tip.offsetWidth > bx.width - 8) left = ev.clientX - bx.left - tip.offsetWidth - 14;
+    tip.style.left = left + "px";
+    tip.style.top = (ev.clientY - bx.top - 10) + "px";
+  });
+  hitArea.addEventListener("mouseleave", () => {
+    tip.style.display = "none";
+    xhair.setAttribute("visibility", "hidden");
+    xdot.setAttribute("visibility", "hidden");
+  });
+}
+
+// --- latest / live game ---
+async function loadGame(teamId) {
+  if (!teamId) return;
+  const now = new Date();
+  const start = new Date(now); start.setDate(start.getDate() - 2);
+  const end = new Date(now); end.setDate(end.getDate() + 1);
+  const data = await fetchJSON(`${API}/schedule?sportId=1&teamId=${teamId}&startDate=${fmtDateISO(start)}&endDate=${fmtDateISO(end)}&hydrate=linescore,team`);
+  const games = (data.dates ?? []).flatMap(d => d.games ?? []);
+  if (!games.length) { $("gameCard").hidden = true; return; }
+  const live = games.find(g => g.status?.abstractGameState === "Live");
+  const game = live
+    ?? [...games].reverse().find(g => g.status?.abstractGameState === "Final")
+    ?? games[0];
+
+  const away = game.teams.away, home = game.teams.home;
+  const state = game.status?.abstractGameState;
+  let badge;
+  if (state === "Live") {
+    const ls = game.linescore;
+    const half = ls?.inningHalf === "Top" ? "表" : ls?.inningHalf === "Bottom" ? "裏" : "";
+    badge = `<span class="badge live">● LIVE ${ls?.currentInning ?? ""}回${half}</span>`;
+  } else if (state === "Final") {
+    badge = `<span class="badge">試合終了</span>`;
+  } else {
+    const t = new Date(game.gameDate);
+    badge = `<span class="badge">予定 ${t.toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>`;
+  }
+  const score = state === "Preview"
+    ? `<span class="score">–</span>`
+    : `<span class="score">${away.score ?? 0} - ${home.score ?? 0}</span>`;
+  $("gameBody").innerHTML = `${badge}
+    <span class="teams">${esc(away.team?.abbreviation ?? away.team?.name)} @ ${esc(home.team?.abbreviation ?? home.team?.name)}</span>
+    ${score}`;
+  $("gameCard").hidden = false;
+}
+
+// --- orchestration ---
+let refreshing = false;
+async function refresh() {
+  if (refreshing) return;
+  refreshing = true;
+  $("refreshBtn").disabled = true;
+  try {
+    const { season, person } = await resolveSeasonData();
+    $("playerMeta").textContent =
+      `Shohei Ohtani ・ ${person.currentTeam?.name ?? ""} ・ #${person.primaryNumber ?? "17"}`;
+    renderHitting(splitStat(person, "hitting"), season);
+    renderPitching(splitStat(person, "pitching"), season);
+
+    await loadTeamAbbr(season);
+    const logs = await loadGameLogs(season);
+    renderHitLog(logs.hitting);
+    renderPitLog(logs.pitching);
+    renderHRChart(logs.hitting);
+
+    await loadGame(person.currentTeam?.id).catch(() => { $("gameCard").hidden = true; });
+
+    $("stamp").textContent = `最終更新 ${new Date().toLocaleTimeString("ja-JP")}`;
+  } catch (err) {
+    console.error(err);
+    $("stamp").innerHTML = `<span class="error">更新に失敗しました(${esc(err.message)})。次回の自動更新で再試行します。</span>`;
+  } finally {
+    refreshing = false;
+    $("refreshBtn").disabled = false;
+  }
+}
+
+$("refreshBtn").addEventListener("click", refresh);
+refresh();
+setInterval(refresh, REFRESH_MS);
+</script>
+</body>
+</html>
