@@ -104,6 +104,8 @@
     font-size: 12px; font-weight: 500; color: var(--text-muted);
     margin-left: 6px; white-space: nowrap;
   }
+  .hero .hint { font-size: 12px; color: var(--text-muted); }
+  .hint.top { font-weight: 700; color: var(--text-secondary); }
 
   .hero { display: flex; gap: 28px; flex-wrap: wrap; margin-bottom: 16px; }
   .hero .value { font-size: 48px; font-weight: 600; line-height: 1.1; }
@@ -142,6 +144,9 @@
   .standings h3 { font-size: 12px; font-weight: 600; color: var(--text-muted); margin: 8px 0 4px; }
   .standings td.l { max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
   tr.me td { background: var(--series-1-wash); font-weight: 600; }
+  tr.cut td { border-bottom: 1px solid var(--baseline); }
+  .lg-head { font-size: 14px; font-weight: 700; margin: 14px 0 2px; }
+  .lg-head:first-child { margin-top: 4px; }
   #standSummary { font-size: 13px; color: var(--text-secondary); margin-bottom: 4px; }
   #standSummary b { color: var(--text-primary); }
 
@@ -183,9 +188,9 @@
   </div>
 
   <div class="card" id="standCard" hidden>
-    <h2>ナ・リーグ順位<span class="en">NL STANDINGS</span></h2>
+    <h2>順位表<span class="en">MLB STANDINGS</span></h2>
     <div id="standSummary"></div>
-    <div class="standings" id="standBody"></div>
+    <div id="standBody"></div>
   </div>
 
   <div class="card">
@@ -269,13 +274,18 @@ function trendMarkup(value, tr) {
   const prev = d !== 0 && tr?.p != null ? `<span class="prev">前回 ${esc(tr.p)}</span>` : "";
   return { cls, html: esc(value) + arrow + prev };
 }
-function tile(label, value, tr) {
-  const t = trendMarkup(value, tr);
-  return `<div class="tile"><div class="label">${esc(label)}</div><div class="value${t.cls}">${t.html}</div></div>`;
+// リーグ順位の注記(1〜3位は少し強調)
+function rankHint(rank) {
+  if (!rank) return "";
+  return `<div class="hint${rank <= 3 ? " top" : ""}">リーグ ${rank}位</div>`;
 }
-function heroFig(label, value, tr) {
+function tile(label, value, tr, rank) {
   const t = trendMarkup(value, tr);
-  return `<div><div class="value${t.cls}">${t.html}</div><div class="label">${esc(label)}</div></div>`;
+  return `<div class="tile"><div class="label">${esc(label)}</div><div class="value${t.cls}">${t.html}</div>${rankHint(rank)}</div>`;
+}
+function heroFig(label, value, tr, rank) {
+  const t = trendMarkup(value, tr);
+  return `<div><div class="value${t.cls}">${t.html}</div><div class="label">${esc(label)}</div>${rankHint(rank)}</div>`;
 }
 
 // 直近24時間以内に開始された試合のログだけを抽出
@@ -362,36 +372,36 @@ function computePitDirs(stat, splits, timeByPk) {
   };
 }
 
-function renderHitting(stat, season, dirs = {}) {
+function renderHitting(stat, season, dirs = {}, ranks = {}) {
   $("hitTitle").innerHTML = `打撃成績 ${season}<span class="en">HITTING</span>`;
   if (!stat) { $("hitHero").innerHTML = ""; $("hitTiles").innerHTML = `<span class="loading">データなし</span>`; return; }
-  $("hitHero").innerHTML = heroFig("本塁打", stat.homeRuns, dirs.hr);
+  $("hitHero").innerHTML = heroFig("本塁打", stat.homeRuns, dirs.hr, ranks.hr);
   $("hitTiles").innerHTML = [
-    tile("打率", stat.avg, dirs.avg),
-    tile("打点", stat.rbi, dirs.rbi),
-    tile("OPS", stat.ops, dirs.ops),
-    tile("出塁率", stat.obp, dirs.obp),
-    tile("長打率", stat.slg, dirs.slg),
-    tile("安打", stat.hits, dirs.hits),
-    tile("得点", stat.runs, dirs.runs),
-    tile("盗塁", stat.stolenBases, dirs.sb),
-    tile("四球", stat.baseOnBalls, dirs.bb),
+    tile("打率", stat.avg, dirs.avg, ranks.avg),
+    tile("打点", stat.rbi, dirs.rbi, ranks.rbi),
+    tile("OPS", stat.ops, dirs.ops, ranks.ops),
+    tile("出塁率", stat.obp, dirs.obp, ranks.obp),
+    tile("長打率", stat.slg, dirs.slg, ranks.slg),
+    tile("安打", stat.hits, dirs.hits, ranks.hits),
+    tile("得点", stat.runs, dirs.runs, ranks.runs),
+    tile("盗塁", stat.stolenBases, dirs.sb, ranks.sb),
+    tile("四球", stat.baseOnBalls, dirs.bb, ranks.bb),
     tile("三振", stat.strikeOuts, dirs.so),
     tile("試合", stat.gamesPlayed, dirs.g),
     tile("打席", stat.plateAppearances, dirs.pa),
   ].join("");
 }
 
-function renderPitching(stat, season, dirs = {}) {
+function renderPitching(stat, season, dirs = {}, ranks = {}) {
   $("pitTitle").innerHTML = `投手成績 ${season}<span class="en">PITCHING</span>`;
   if (!stat) { $("pitHero").innerHTML = ""; $("pitTiles").innerHTML = `<span class="loading">データなし</span>`; return; }
-  $("pitHero").innerHTML = heroFig("防御率", stat.era, dirs.era);
+  $("pitHero").innerHTML = heroFig("防御率", stat.era, dirs.era, ranks.era);
   $("pitTiles").innerHTML = [
-    tile("勝敗", `${stat.wins}勝${stat.losses}敗`, dirs.winloss),
-    tile("奪三振", stat.strikeOuts, dirs.so),
-    tile("投球回", stat.inningsPitched, dirs.ip),
-    tile("WHIP", stat.whip, dirs.whip),
-    tile("K/9", stat.strikeoutsPer9Inn, dirs.k9),
+    tile("勝敗", `${stat.wins}勝${stat.losses}敗`, dirs.winloss, ranks.winloss),
+    tile("奪三振", stat.strikeOuts, dirs.so, ranks.so),
+    tile("投球回", stat.inningsPitched, dirs.ip, ranks.ip),
+    tile("WHIP", stat.whip, dirs.whip, ranks.whip),
+    tile("K/9", stat.strikeoutsPer9Inn, dirs.k9, ranks.k9),
     tile("被打率", stat.avg, dirs.avg),
     tile("与四球", stat.baseOnBalls, dirs.bb),
     tile("先発", stat.gamesStarted, dirs.gs),
@@ -518,50 +528,106 @@ function renderHRChart(splits) {
   });
 }
 
-// --- NL standings ---
-const DIV_JA = { 203: "西地区", 204: "東地区", 205: "中地区" };
+// --- 各スタッツのリーグ順位(ナ・リーグ内) ---
+const HIT_RANK_CATS = {
+  battingAverage: "avg", homeRuns: "hr", runsBattedIn: "rbi",
+  onBasePlusSlugging: "ops", onBasePercentage: "obp", sluggingPercentage: "slg",
+  hits: "hits", runs: "runs", stolenBases: "sb", walks: "bb",
+};
+const PIT_RANK_CATS = {
+  earnedRunAverage: "era", wins: "winloss", strikeouts: "so",
+  inningsPitched: "ip", walksAndHitsPerInningPitched: "whip", strikeoutsPer9Inn: "k9",
+};
+
+async function loadRanks(season) {
+  const get = async (cats, group) => {
+    const url = `${API}/stats/leaders?leaderCategories=${Object.keys(cats).join(",")}&statGroup=${group}&leagueId=104&season=${season}&limit=250`;
+    const data = await fetchJSON(url);
+    const out = {};
+    (data.leagueLeaders ?? []).forEach(cat => {
+      const me = (cat.leaders ?? []).find(l => l.person?.id === PLAYER_ID);
+      if (me && cats[cat.leaderCategory]) out[cats[cat.leaderCategory]] = me.rank;
+    });
+    return out;
+  };
+  const [hit, pit] = await Promise.all([
+    get(HIT_RANK_CATS, "hitting"),
+    get(PIT_RANK_CATS, "pitching"),
+  ]);
+  return { hit, pit };
+}
+
+// --- MLB standings (両リーグ + ワイルドカード) ---
+const LEAGUE_JA = { 104: "ナ・リーグ", 103: "ア・リーグ" };
+const DIV_JA = {
+  203: "西地区", 204: "東地区", 205: "中地区",   // NL
+  200: "西地区", 201: "東地区", 202: "中地区",   // AL
+};
+const DIV_ORDER = { 204: 0, 205: 1, 203: 2, 201: 0, 202: 1, 200: 2 }; // 東・中・西
 const TEAM_JA = {
   LAD: "ドジャース", SD: "パドレス", SF: "ジャイアンツ", AZ: "Dバックス", COL: "ロッキーズ",
   ATL: "ブレーブス", PHI: "フィリーズ", NYM: "メッツ", WSH: "ナショナルズ", MIA: "マーリンズ",
   CHC: "カブス", STL: "カージナルス", MIL: "ブルワーズ", CIN: "レッズ", PIT: "パイレーツ",
+  NYY: "ヤンキース", BOS: "レッドソックス", TB: "レイズ", TOR: "ブルージェイズ", BAL: "オリオールズ",
+  CLE: "ガーディアンズ", DET: "タイガース", KC: "ロイヤルズ", MIN: "ツインズ", CWS: "ホワイトソックス",
+  HOU: "アストロズ", SEA: "マリナーズ", TEX: "レンジャーズ", ATH: "アスレチックス", LAA: "エンゼルス",
 };
+const teamJaName = t => TEAM_JA[teamAbbr?.[t?.id] ?? ""] ?? t?.name ?? "";
 
 async function loadStandings(season) {
-  const data = await fetchJSON(`${API}/standings?leagueId=104&season=${season}&standingsTypes=regularSeason`);
+  const data = await fetchJSON(`${API}/standings?leagueId=103,104&season=${season}&standingsTypes=regularSeason,wildCard`);
   return data.records ?? [];
 }
 
 function renderStandings(records, myTeamId) {
   if (!records?.length) { $("standCard").hidden = true; return; }
-  // 大谷の所属チームがいる地区を先頭に
-  const hasMe = rec => rec.teamRecords?.some(t => t.team?.id === myTeamId);
-  const ordered = [...records].sort((a, b) => (hasMe(a) ? 0 : 1) - (hasMe(b) ? 0 : 1));
+  const divRecs = records.filter(r => r.standingsType === "regularSeason");
+  const wcRecs = records.filter(r => r.standingsType === "wildCard");
 
-  const me = records.flatMap(r => r.teamRecords ?? []).find(t => t.team?.id === myTeamId);
-  if (me) {
-    const divName = DIV_JA[ordered[0]?.division?.id] ?? "地区";
-    const abbr = teamAbbr?.[myTeamId] ?? "";
-    $("standSummary").innerHTML =
-      `${esc(TEAM_JA[abbr] ?? me.team?.name ?? "")}: <b>${esc(divName)} ${esc(me.divisionRank)}位</b> ・ リーグ全体 <b>${esc(me.leagueRank)}位</b>(${me.wins}勝${me.losses}敗)`;
-  } else {
-    $("standSummary").innerHTML = "";
-  }
+  // サマリー: 大谷の所属チームの位置
+  const meRec = divRecs.find(r => r.teamRecords?.some(t => t.team?.id === myTeamId));
+  const me = meRec?.teamRecords?.find(t => t.team?.id === myTeamId);
+  $("standSummary").innerHTML = me
+    ? `${esc(teamJaName(me.team))}: <b>${esc(DIV_JA[meRec.division?.id] ?? "地区")} ${esc(me.divisionRank)}位</b> ・ リーグ全体 <b>${esc(me.leagueRank)}位</b>(${me.wins}勝${me.losses}敗)`
+    : "";
 
-  $("standBody").innerHTML = ordered.map(rec => {
-    const rows = (rec.teamRecords ?? []).map(t => {
-      const abbr = teamAbbr?.[t.team?.id] ?? "";
-      const name = TEAM_JA[abbr] ?? t.team?.name ?? "";
-      return `<tr${t.team?.id === myTeamId ? ' class="me"' : ""}>
+  const divTable = rec => {
+    const rows = (rec.teamRecords ?? []).map(t => `<tr${t.team?.id === myTeamId ? ' class="me"' : ""}>
         <td class="dim">${esc(t.divisionRank)}</td>
-        <td class="l">${esc(name)}</td>
+        <td class="l">${esc(teamJaName(t.team))}</td>
         <td>${t.wins}</td><td>${t.losses}</td>
         <td>${esc(t.winningPercentage)}</td>
         <td class="dim">${esc(t.gamesBack)}</td>
-      </tr>`;
-    }).join("");
+      </tr>`).join("");
     return `<div><h3>${esc(DIV_JA[rec.division?.id] ?? "")}</h3>
       <table><thead><tr><th></th><th class="l">チーム</th><th>勝</th><th>敗</th><th>率</th><th>差</th></tr></thead>
       <tbody>${rows}</tbody></table></div>`;
+  };
+
+  const wcTable = rec => {
+    if (!rec) return "";
+    const rows = (rec.teamRecords ?? []).slice(0, 6).map((t, i) => {
+      const cls = [t.team?.id === myTeamId ? "me" : "", i === 2 ? "cut" : ""].filter(Boolean).join(" ");
+      return `<tr${cls ? ` class="${cls}"` : ""}>
+        <td class="dim">${esc(t.wildCardRank ?? "")}</td>
+        <td class="l">${esc(teamJaName(t.team))}</td>
+        <td>${t.wins}</td><td>${t.losses}</td>
+        <td>${esc(t.winningPercentage)}</td>
+        <td class="dim">${esc(t.wildCardGamesBack)}</td>
+      </tr>`;
+    }).join("");
+    return `<div><h3>ワイルドカード(上位3チームが進出圏)</h3>
+      <table><thead><tr><th></th><th class="l">チーム</th><th>勝</th><th>敗</th><th>率</th><th>差</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+  };
+
+  $("standBody").innerHTML = [104, 103].map(lg => {
+    const divs = divRecs
+      .filter(r => r.league?.id === lg)
+      .sort((a, b) => (DIV_ORDER[a.division?.id] ?? 9) - (DIV_ORDER[b.division?.id] ?? 9));
+    const wc = wcRecs.find(r => r.league?.id === lg);
+    return `<div class="lg-head">${LEAGUE_JA[lg]}</div>
+      <div class="standings">${divs.map(divTable).join("")}${wcTable(wc)}</div>`;
   }).join("");
   $("standCard").hidden = false;
 }
@@ -616,17 +682,18 @@ async function refresh() {
     $("playerMeta").textContent =
       `Shohei Ohtani ・ ${person.currentTeam?.name ?? ""} ・ #${person.primaryNumber ?? "17"}`;
     await loadTeamAbbr(season);
-    const [logs, games, standings] = await Promise.all([
+    const [logs, games, standings, ranks] = await Promise.all([
       loadGameLogs(season),
       fetchScheduleGames(person.currentTeam?.id).catch(() => []),
       loadStandings(season).catch(() => []),
+      loadRanks(season).catch(() => ({ hit: {}, pit: {} })),
     ]);
     const timeByPk = new Map(games.map(g => [g.gamePk, Date.parse(g.gameDate)]));
 
     const hitStat = splitStat(person, "hitting");
     const pitStat = splitStat(person, "pitching");
-    renderHitting(hitStat, season, computeHitDirs(hitStat, logs.hitting, timeByPk));
-    renderPitching(pitStat, season, computePitDirs(pitStat, logs.pitching, timeByPk));
+    renderHitting(hitStat, season, computeHitDirs(hitStat, logs.hitting, timeByPk), ranks.hit);
+    renderPitching(pitStat, season, computePitDirs(pitStat, logs.pitching, timeByPk), ranks.pit);
 
     renderHitLog(logs.hitting);
     renderPitLog(logs.pitching);
