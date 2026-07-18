@@ -100,6 +100,10 @@
   .value.up { color: var(--good); }
   .value.down { color: var(--live); }
   .arrow { font-size: 0.45em; vertical-align: middle; margin-left: 3px; }
+  .prev {
+    font-size: 12px; font-weight: 500; color: var(--text-muted);
+    margin-left: 6px; white-space: nowrap;
+  }
 
   .hero { display: flex; gap: 28px; flex-wrap: wrap; margin-bottom: 16px; }
   .hero .value { font-size: 48px; font-weight: 600; line-height: 1.1; }
@@ -243,17 +247,20 @@ const ipToOuts = ip => {
   return (Number(w) || 0) * 3 + (Number(f) || 0);
 };
 
-function trendMarkup(value, dir) {
-  const cls = dir > 0 ? " up" : dir < 0 ? " down" : "";
-  const arrow = dir > 0 ? '<span class="arrow">▲</span>' : dir < 0 ? '<span class="arrow">▼</span>' : "";
-  return { cls, html: esc(value) + arrow };
+// tr = { d: 方向(-1/0/1), p: 前回値の表示文字列 }
+function trendMarkup(value, tr) {
+  const d = tr?.d ?? 0;
+  const cls = d > 0 ? " up" : d < 0 ? " down" : "";
+  const arrow = d > 0 ? '<span class="arrow">▲</span>' : d < 0 ? '<span class="arrow">▼</span>' : "";
+  const prev = d !== 0 && tr?.p != null ? `<span class="prev">前回 ${esc(tr.p)}</span>` : "";
+  return { cls, html: esc(value) + arrow + prev };
 }
-function tile(label, value, dir = 0) {
-  const t = trendMarkup(value, dir);
+function tile(label, value, tr) {
+  const t = trendMarkup(value, tr);
   return `<div class="tile"><div class="label">${esc(label)}</div><div class="value${t.cls}">${t.html}</div></div>`;
 }
-function heroFig(label, value, dir = 0) {
-  const t = trendMarkup(value, dir);
+function heroFig(label, value, tr) {
+  const t = trendMarkup(value, tr);
   return `<div><div class="value${t.cls}">${t.html}</div><div class="label">${esc(label)}</div></div>`;
 }
 
@@ -267,12 +274,17 @@ function recentSplits(splits, timeByPk) {
   });
 }
 
+// 率を ".293" 形式に整形
+const fmt3 = x => x.toFixed(3).replace(/^0\./, ".");
+
 function computeHitDirs(stat, splits, timeByPk) {
   if (!stat) return {};
   const rec = recentSplits(splits, timeByPk);
   if (!rec.length) return {};
   const S = f => rec.reduce((a, s) => a + (Number(s.stat[f]) || 0), 0);
   const n = v => Number(v) || 0;
+  // カウント系: 前回値 = 現在値 - 直近試合分
+  const cnt = f => ({ d: sign(S(f)), p: n(stat[f]) - S(f) });
   const bAB = n(stat.atBats) - S("atBats");
   const bH = n(stat.hits) - S("hits");
   const bBB = n(stat.baseOnBalls) - S("baseOnBalls");
@@ -280,22 +292,25 @@ function computeHitDirs(stat, splits, timeByPk) {
   const bSF = n(stat.sacFlies) - S("sacFlies");
   const bTB = n(stat.totalBases) - S("totalBases");
   const rate = (num, den) => (den > 0 ? num / den : 0);
+  const bAvg = rate(bH, bAB);
   const bObp = rate(bH + bBB + bHBP, bAB + bBB + bHBP + bSF);
   const bSlg = rate(bTB, bAB);
+  // MLB公式のOPSは出塁率・長打率を3桁に丸めてから合算する
+  const bOps = (Math.round(bObp * 1000) + Math.round(bSlg * 1000)) / 1000;
   return {
-    hr: sign(S("homeRuns")),
-    rbi: sign(S("rbi")),
-    hits: sign(S("hits")),
-    runs: sign(S("runs")),
-    sb: sign(S("stolenBases")),
-    bb: sign(S("baseOnBalls")),
-    so: sign(S("strikeOuts")),
-    g: sign(rec.length),
-    pa: sign(S("plateAppearances")),
-    avg: cmpAt(parseFloat(stat.avg), rate(bH, bAB), 3),
-    obp: cmpAt(parseFloat(stat.obp), bObp, 3),
-    slg: cmpAt(parseFloat(stat.slg), bSlg, 3),
-    ops: cmpAt(parseFloat(stat.ops), bObp + bSlg, 3),
+    hr: cnt("homeRuns"),
+    rbi: cnt("rbi"),
+    hits: cnt("hits"),
+    runs: cnt("runs"),
+    sb: cnt("stolenBases"),
+    bb: cnt("baseOnBalls"),
+    so: cnt("strikeOuts"),
+    g: { d: sign(rec.length), p: n(stat.gamesPlayed) - rec.length },
+    pa: cnt("plateAppearances"),
+    avg: { d: cmpAt(parseFloat(stat.avg), bAvg, 3), p: fmt3(bAvg) },
+    obp: { d: cmpAt(parseFloat(stat.obp), bObp, 3), p: fmt3(bObp) },
+    slg: { d: cmpAt(parseFloat(stat.slg), bSlg, 3), p: fmt3(bSlg) },
+    ops: { d: cmpAt(parseFloat(stat.ops), bOps, 3), p: fmt3(bOps) },
   };
 }
 
@@ -305,6 +320,7 @@ function computePitDirs(stat, splits, timeByPk) {
   if (!rec.length) return {};
   const S = f => rec.reduce((a, s) => a + (Number(s.stat[f]) || 0), 0);
   const n = v => Number(v) || 0;
+  const cnt = f => ({ d: sign(S(f)), p: n(stat[f]) - S(f) });
   const outsNow = ipToOuts(stat.inningsPitched);
   const bOuts = outsNow - rec.reduce((a, s) => a + ipToOuts(s.stat.inningsPitched), 0);
   const bER = n(stat.earnedRuns) - S("earnedRuns");
@@ -312,17 +328,23 @@ function computePitDirs(stat, splits, timeByPk) {
   const bBB = n(stat.baseOnBalls) - S("baseOnBalls");
   const bSO = n(stat.strikeOuts) - S("strikeOuts");
   const bAB = n(stat.atBats) - S("atBats");
+  const bW = n(stat.wins) - S("wins");
+  const bL = n(stat.losses) - S("losses");
   const rate = (num, den) => (den > 0 ? num / den : 0);
+  const bEra = rate(27 * bER, bOuts);
+  const bWhip = rate(bH + bBB, bOuts / 3);
+  const bK9 = rate(27 * bSO, bOuts);
+  const outsToIp = o => `${Math.floor(o / 3)}.${o % 3}`;
   return {
-    era: cmpAt(parseFloat(stat.era), rate(27 * bER, bOuts), 2),
-    winloss: S("wins") > 0 ? 1 : S("losses") > 0 ? -1 : 0,
-    so: sign(S("strikeOuts")),
-    ip: sign(outsNow - bOuts),
-    whip: cmpAt(parseFloat(stat.whip), rate(bH + bBB, bOuts / 3), 2),
-    k9: cmpAt(parseFloat(stat.strikeoutsPer9Inn), rate(27 * bSO, bOuts), 2),
-    avg: cmpAt(parseFloat(stat.avg), rate(bH, bAB), 3),
-    bb: sign(S("baseOnBalls")),
-    gs: sign(S("gamesStarted")),
+    era: { d: cmpAt(parseFloat(stat.era), bEra, 2), p: bEra.toFixed(2) },
+    winloss: { d: S("wins") > 0 ? 1 : S("losses") > 0 ? -1 : 0, p: `${bW}勝${bL}敗` },
+    so: cnt("strikeOuts"),
+    ip: { d: sign(outsNow - bOuts), p: outsToIp(bOuts) },
+    whip: { d: cmpAt(parseFloat(stat.whip), bWhip, 2), p: bWhip.toFixed(2) },
+    k9: { d: cmpAt(parseFloat(stat.strikeoutsPer9Inn), bK9, 2), p: bK9.toFixed(2) },
+    avg: { d: cmpAt(parseFloat(stat.avg), rate(bH, bAB), 3), p: fmt3(rate(bH, bAB)) },
+    bb: cnt("baseOnBalls"),
+    gs: cnt("gamesStarted"),
   };
 }
 
