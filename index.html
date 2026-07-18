@@ -137,6 +137,14 @@
   td.dim { color: var(--text-secondary); }
   tr:last-child td { border-bottom: none; }
 
+  /* standings */
+  .standings { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px 24px; }
+  .standings h3 { font-size: 12px; font-weight: 600; color: var(--text-muted); margin: 8px 0 4px; }
+  .standings td.l { max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+  tr.me td { background: var(--series-1-wash); font-weight: 600; }
+  #standSummary { font-size: 13px; color: var(--text-secondary); margin-bottom: 4px; }
+  #standSummary b { color: var(--text-primary); }
+
   .error {
     color: var(--live); font-size: 14px; padding: 12px 0;
   }
@@ -172,6 +180,12 @@
     <h2 id="pitTitle">投手成績<span class="en">PITCHING</span></h2>
     <div class="hero" id="pitHero"></div>
     <div class="tiles" id="pitTiles"><span class="loading">読み込み中…</span></div>
+  </div>
+
+  <div class="card" id="standCard" hidden>
+    <h2>ナ・リーグ順位<span class="en">NL STANDINGS</span></h2>
+    <div id="standSummary"></div>
+    <div class="standings" id="standBody"></div>
   </div>
 
   <div class="card">
@@ -504,6 +518,54 @@ function renderHRChart(splits) {
   });
 }
 
+// --- NL standings ---
+const DIV_JA = { 203: "西地区", 204: "東地区", 205: "中地区" };
+const TEAM_JA = {
+  LAD: "ドジャース", SD: "パドレス", SF: "ジャイアンツ", AZ: "Dバックス", COL: "ロッキーズ",
+  ATL: "ブレーブス", PHI: "フィリーズ", NYM: "メッツ", WSH: "ナショナルズ", MIA: "マーリンズ",
+  CHC: "カブス", STL: "カージナルス", MIL: "ブルワーズ", CIN: "レッズ", PIT: "パイレーツ",
+};
+
+async function loadStandings(season) {
+  const data = await fetchJSON(`${API}/standings?leagueId=104&season=${season}&standingsTypes=regularSeason`);
+  return data.records ?? [];
+}
+
+function renderStandings(records, myTeamId) {
+  if (!records?.length) { $("standCard").hidden = true; return; }
+  // 大谷の所属チームがいる地区を先頭に
+  const hasMe = rec => rec.teamRecords?.some(t => t.team?.id === myTeamId);
+  const ordered = [...records].sort((a, b) => (hasMe(a) ? 0 : 1) - (hasMe(b) ? 0 : 1));
+
+  const me = records.flatMap(r => r.teamRecords ?? []).find(t => t.team?.id === myTeamId);
+  if (me) {
+    const divName = DIV_JA[ordered[0]?.division?.id] ?? "地区";
+    const abbr = teamAbbr?.[myTeamId] ?? "";
+    $("standSummary").innerHTML =
+      `${esc(TEAM_JA[abbr] ?? me.team?.name ?? "")}: <b>${esc(divName)} ${esc(me.divisionRank)}位</b> ・ リーグ全体 <b>${esc(me.leagueRank)}位</b>(${me.wins}勝${me.losses}敗)`;
+  } else {
+    $("standSummary").innerHTML = "";
+  }
+
+  $("standBody").innerHTML = ordered.map(rec => {
+    const rows = (rec.teamRecords ?? []).map(t => {
+      const abbr = teamAbbr?.[t.team?.id] ?? "";
+      const name = TEAM_JA[abbr] ?? t.team?.name ?? "";
+      return `<tr${t.team?.id === myTeamId ? ' class="me"' : ""}>
+        <td class="dim">${esc(t.divisionRank)}</td>
+        <td class="l">${esc(name)}</td>
+        <td>${t.wins}</td><td>${t.losses}</td>
+        <td>${esc(t.winningPercentage)}</td>
+        <td class="dim">${esc(t.gamesBack)}</td>
+      </tr>`;
+    }).join("");
+    return `<div><h3>${esc(DIV_JA[rec.division?.id] ?? "")}</h3>
+      <table><thead><tr><th></th><th class="l">チーム</th><th>勝</th><th>敗</th><th>率</th><th>差</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+  }).join("");
+  $("standCard").hidden = false;
+}
+
 // --- latest / live game ---
 async function fetchScheduleGames(teamId) {
   if (!teamId) return [];
@@ -554,9 +616,10 @@ async function refresh() {
     $("playerMeta").textContent =
       `Shohei Ohtani ・ ${person.currentTeam?.name ?? ""} ・ #${person.primaryNumber ?? "17"}`;
     await loadTeamAbbr(season);
-    const [logs, games] = await Promise.all([
+    const [logs, games, standings] = await Promise.all([
       loadGameLogs(season),
       fetchScheduleGames(person.currentTeam?.id).catch(() => []),
+      loadStandings(season).catch(() => []),
     ]);
     const timeByPk = new Map(games.map(g => [g.gamePk, Date.parse(g.gameDate)]));
 
@@ -569,6 +632,7 @@ async function refresh() {
     renderPitLog(logs.pitching);
     renderHRChart(logs.hitting);
     renderGameBanner(games);
+    renderStandings(standings, person.currentTeam?.id);
 
     $("stamp").textContent = `最終更新 ${new Date().toLocaleTimeString("ja-JP")}`;
   } catch (err) {
