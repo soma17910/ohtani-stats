@@ -225,81 +225,140 @@ function splitStat(person, group) {
   return entry?.splits?.[0]?.stat ?? null;
 }
 
-// --- 株価風の変動トラッキング ---
-// 前回値と比較し、上昇=緑▲ / 下降=赤▼。変動なし・変動から24時間経過は通常色。
-const TRACK_KEY = "ohtaniStatsTrack_v1";
-const TRACK_TTL_MS = 24 * 60 * 60 * 1000;
-let track = {};
-try { track = JSON.parse(localStorage.getItem(TRACK_KEY)) ?? {}; } catch {}
+// --- 株価風の変動カラー(前日比方式) ---
+// 直近24時間以内に行われた試合の成績を試合ログから逆算し、
+// 「試合前の値」と現在値を比較して 上昇=緑▲ / 下降=赤▼ を付ける。
+// 変動なし、または直近24時間に試合がない場合は通常色。
+// 端末やブラウザに依存せず、どこで開いても同じ色になる。
+const TREND_WINDOW_MS = 24 * 60 * 60 * 1000;
+const sign = d => (d > 0 ? 1 : d < 0 ? -1 : 0);
+// 表示桁数で丸めてから比較する(見た目が同じ数値は「変動なし」扱い)
+const cmpAt = (cur, before, digits) => {
+  const m = 10 ** digits;
+  return sign(Math.round(cur * m) - Math.round(before * m));
+};
+// 投球回 "85.2" → アウト数 (85*3+2)
+const ipToOuts = ip => {
+  const [w, f] = String(ip ?? "0").split(".");
+  return (Number(w) || 0) * 3 + (Number(f) || 0);
+};
 
-function trendDir(key, num) {
-  if (!key || num == null || Number.isNaN(num)) return 0;
-  const now = Date.now();
-  const rec = track[key];
-  if (!rec) { track[key] = { v: num, t: 0, d: 0 }; return 0; }
-  if (num !== rec.v) {
-    rec.d = num > rec.v ? 1 : -1;
-    rec.v = num;
-    rec.t = now;
-  } else if (rec.d !== 0 && now - rec.t >= TRACK_TTL_MS) {
-    rec.d = 0;
-  }
-  return rec.d;
-}
-function saveTrack() {
-  try { localStorage.setItem(TRACK_KEY, JSON.stringify(track)); } catch {}
-}
-function trendMarkup(value, key, num) {
-  const d = trendDir(key, num ?? parseFloat(value));
-  const cls = d > 0 ? " up" : d < 0 ? " down" : "";
-  const arrow = d > 0 ? '<span class="arrow">▲</span>' : d < 0 ? '<span class="arrow">▼</span>' : "";
+function trendMarkup(value, dir) {
+  const cls = dir > 0 ? " up" : dir < 0 ? " down" : "";
+  const arrow = dir > 0 ? '<span class="arrow">▲</span>' : dir < 0 ? '<span class="arrow">▼</span>' : "";
   return { cls, html: esc(value) + arrow };
 }
-
-function tile(label, value, key, num) {
-  const t = trendMarkup(value, key, num);
+function tile(label, value, dir = 0) {
+  const t = trendMarkup(value, dir);
   return `<div class="tile"><div class="label">${esc(label)}</div><div class="value${t.cls}">${t.html}</div></div>`;
 }
-function heroFig(label, value, key, num) {
-  const t = trendMarkup(value, key, num);
+function heroFig(label, value, dir = 0) {
+  const t = trendMarkup(value, dir);
   return `<div><div class="value${t.cls}">${t.html}</div><div class="label">${esc(label)}</div></div>`;
 }
 
-function renderHitting(stat, season) {
+// 直近24時間以内に開始された試合のログだけを抽出
+function recentSplits(splits, timeByPk) {
+  const now = Date.now();
+  return splits.filter(s => {
+    const t = timeByPk.get(s.game?.gamePk);
+    if (t != null) return t <= now && now - t < TREND_WINDOW_MS;
+    return s.date >= fmtDateISO(new Date(now - TREND_WINDOW_MS));
+  });
+}
+
+function computeHitDirs(stat, splits, timeByPk) {
+  if (!stat) return {};
+  const rec = recentSplits(splits, timeByPk);
+  if (!rec.length) return {};
+  const S = f => rec.reduce((a, s) => a + (Number(s.stat[f]) || 0), 0);
+  const n = v => Number(v) || 0;
+  const bAB = n(stat.atBats) - S("atBats");
+  const bH = n(stat.hits) - S("hits");
+  const bBB = n(stat.baseOnBalls) - S("baseOnBalls");
+  const bHBP = n(stat.hitByPitch) - S("hitByPitch");
+  const bSF = n(stat.sacFlies) - S("sacFlies");
+  const bTB = n(stat.totalBases) - S("totalBases");
+  const rate = (num, den) => (den > 0 ? num / den : 0);
+  const bObp = rate(bH + bBB + bHBP, bAB + bBB + bHBP + bSF);
+  const bSlg = rate(bTB, bAB);
+  return {
+    hr: sign(S("homeRuns")),
+    rbi: sign(S("rbi")),
+    hits: sign(S("hits")),
+    runs: sign(S("runs")),
+    sb: sign(S("stolenBases")),
+    bb: sign(S("baseOnBalls")),
+    so: sign(S("strikeOuts")),
+    g: sign(rec.length),
+    pa: sign(S("plateAppearances")),
+    avg: cmpAt(parseFloat(stat.avg), rate(bH, bAB), 3),
+    obp: cmpAt(parseFloat(stat.obp), bObp, 3),
+    slg: cmpAt(parseFloat(stat.slg), bSlg, 3),
+    ops: cmpAt(parseFloat(stat.ops), bObp + bSlg, 3),
+  };
+}
+
+function computePitDirs(stat, splits, timeByPk) {
+  if (!stat) return {};
+  const rec = recentSplits(splits, timeByPk);
+  if (!rec.length) return {};
+  const S = f => rec.reduce((a, s) => a + (Number(s.stat[f]) || 0), 0);
+  const n = v => Number(v) || 0;
+  const outsNow = ipToOuts(stat.inningsPitched);
+  const bOuts = outsNow - rec.reduce((a, s) => a + ipToOuts(s.stat.inningsPitched), 0);
+  const bER = n(stat.earnedRuns) - S("earnedRuns");
+  const bH = n(stat.hits) - S("hits");
+  const bBB = n(stat.baseOnBalls) - S("baseOnBalls");
+  const bSO = n(stat.strikeOuts) - S("strikeOuts");
+  const bAB = n(stat.atBats) - S("atBats");
+  const rate = (num, den) => (den > 0 ? num / den : 0);
+  return {
+    era: cmpAt(parseFloat(stat.era), rate(27 * bER, bOuts), 2),
+    winloss: S("wins") > 0 ? 1 : S("losses") > 0 ? -1 : 0,
+    so: sign(S("strikeOuts")),
+    ip: sign(outsNow - bOuts),
+    whip: cmpAt(parseFloat(stat.whip), rate(bH + bBB, bOuts / 3), 2),
+    k9: cmpAt(parseFloat(stat.strikeoutsPer9Inn), rate(27 * bSO, bOuts), 2),
+    avg: cmpAt(parseFloat(stat.avg), rate(bH, bAB), 3),
+    bb: sign(S("baseOnBalls")),
+    gs: sign(S("gamesStarted")),
+  };
+}
+
+function renderHitting(stat, season, dirs = {}) {
   $("hitTitle").innerHTML = `打撃成績 ${season}<span class="en">HITTING</span>`;
   if (!stat) { $("hitHero").innerHTML = ""; $("hitTiles").innerHTML = `<span class="loading">データなし</span>`; return; }
-  const k = name => `${season}.hit.${name}`;
-  $("hitHero").innerHTML = heroFig("本塁打", stat.homeRuns, k("hr"));
+  $("hitHero").innerHTML = heroFig("本塁打", stat.homeRuns, dirs.hr);
   $("hitTiles").innerHTML = [
-    tile("打率", stat.avg, k("avg")),
-    tile("打点", stat.rbi, k("rbi")),
-    tile("OPS", stat.ops, k("ops")),
-    tile("出塁率", stat.obp, k("obp")),
-    tile("長打率", stat.slg, k("slg")),
-    tile("安打", stat.hits, k("hits")),
-    tile("得点", stat.runs, k("runs")),
-    tile("盗塁", stat.stolenBases, k("sb")),
-    tile("四球", stat.baseOnBalls, k("bb")),
-    tile("三振", stat.strikeOuts, k("so")),
-    tile("試合", stat.gamesPlayed, k("g")),
-    tile("打席", stat.plateAppearances, k("pa")),
+    tile("打率", stat.avg, dirs.avg),
+    tile("打点", stat.rbi, dirs.rbi),
+    tile("OPS", stat.ops, dirs.ops),
+    tile("出塁率", stat.obp, dirs.obp),
+    tile("長打率", stat.slg, dirs.slg),
+    tile("安打", stat.hits, dirs.hits),
+    tile("得点", stat.runs, dirs.runs),
+    tile("盗塁", stat.stolenBases, dirs.sb),
+    tile("四球", stat.baseOnBalls, dirs.bb),
+    tile("三振", stat.strikeOuts, dirs.so),
+    tile("試合", stat.gamesPlayed, dirs.g),
+    tile("打席", stat.plateAppearances, dirs.pa),
   ].join("");
 }
 
-function renderPitching(stat, season) {
+function renderPitching(stat, season, dirs = {}) {
   $("pitTitle").innerHTML = `投手成績 ${season}<span class="en">PITCHING</span>`;
   if (!stat) { $("pitHero").innerHTML = ""; $("pitTiles").innerHTML = `<span class="loading">データなし</span>`; return; }
-  const k = name => `${season}.pit.${name}`;
-  $("pitHero").innerHTML = heroFig("防御率", stat.era, k("era"));
+  $("pitHero").innerHTML = heroFig("防御率", stat.era, dirs.era);
   $("pitTiles").innerHTML = [
-    tile("勝敗", `${stat.wins}勝${stat.losses}敗`, k("wins"), Number(stat.wins)),
-    tile("奪三振", stat.strikeOuts, k("so")),
-    tile("投球回", stat.inningsPitched, k("ip")),
-    tile("WHIP", stat.whip, k("whip")),
-    tile("K/9", stat.strikeoutsPer9Inn, k("k9")),
-    tile("被打率", stat.avg, k("avg")),
-    tile("与四球", stat.baseOnBalls, k("bb")),
-    tile("先発", stat.gamesStarted, k("gs")),
+    tile("勝敗", `${stat.wins}勝${stat.losses}敗`, dirs.winloss),
+    tile("奪三振", stat.strikeOuts, dirs.so),
+    tile("投球回", stat.inningsPitched, dirs.ip),
+    tile("WHIP", stat.whip, dirs.whip),
+    tile("K/9", stat.strikeoutsPer9Inn, dirs.k9),
+    tile("被打率", stat.avg, dirs.avg),
+    tile("与四球", stat.baseOnBalls, dirs.bb),
+    tile("先発", stat.gamesStarted, dirs.gs),
   ].join("");
 }
 
@@ -424,13 +483,16 @@ function renderHRChart(splits) {
 }
 
 // --- latest / live game ---
-async function loadGame(teamId) {
-  if (!teamId) return;
+async function fetchScheduleGames(teamId) {
+  if (!teamId) return [];
   const now = new Date();
   const start = new Date(now); start.setDate(start.getDate() - 2);
   const end = new Date(now); end.setDate(end.getDate() + 1);
   const data = await fetchJSON(`${API}/schedule?sportId=1&teamId=${teamId}&startDate=${fmtDateISO(start)}&endDate=${fmtDateISO(end)}&hydrate=linescore,team`);
-  const games = (data.dates ?? []).flatMap(d => d.games ?? []);
+  return (data.dates ?? []).flatMap(d => d.games ?? []);
+}
+
+function renderGameBanner(games) {
   if (!games.length) { $("gameCard").hidden = true; return; }
   const live = games.find(g => g.status?.abstractGameState === "Live");
   const game = live
@@ -469,17 +531,22 @@ async function refresh() {
     const { season, person } = await resolveSeasonData();
     $("playerMeta").textContent =
       `Shohei Ohtani ・ ${person.currentTeam?.name ?? ""} ・ #${person.primaryNumber ?? "17"}`;
-    renderHitting(splitStat(person, "hitting"), season);
-    renderPitching(splitStat(person, "pitching"), season);
-    saveTrack();
-
     await loadTeamAbbr(season);
-    const logs = await loadGameLogs(season);
+    const [logs, games] = await Promise.all([
+      loadGameLogs(season),
+      fetchScheduleGames(person.currentTeam?.id).catch(() => []),
+    ]);
+    const timeByPk = new Map(games.map(g => [g.gamePk, Date.parse(g.gameDate)]));
+
+    const hitStat = splitStat(person, "hitting");
+    const pitStat = splitStat(person, "pitching");
+    renderHitting(hitStat, season, computeHitDirs(hitStat, logs.hitting, timeByPk));
+    renderPitching(pitStat, season, computePitDirs(pitStat, logs.pitching, timeByPk));
+
     renderHitLog(logs.hitting);
     renderPitLog(logs.pitching);
     renderHRChart(logs.hitting);
-
-    await loadGame(person.currentTeam?.id).catch(() => { $("gameCard").hidden = true; });
+    renderGameBanner(games);
 
     $("stamp").textContent = `最終更新 ${new Date().toLocaleTimeString("ja-JP")}`;
   } catch (err) {
