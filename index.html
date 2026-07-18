@@ -96,6 +96,11 @@
   .tile .value { font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
   .tile .hint { font-size: 11px; color: var(--text-muted); }
 
+  /* 株価風の変動カラー(24時間で通常色に戻る) */
+  .value.up { color: var(--good); }
+  .value.down { color: var(--live); }
+  .arrow { font-size: 0.45em; vertical-align: middle; margin-left: 3px; }
+
   .hero { display: flex; gap: 28px; flex-wrap: wrap; margin-bottom: 16px; }
   .hero .value { font-size: 48px; font-weight: 600; line-height: 1.1; }
   .hero .label { font-size: 13px; color: var(--text-secondary); }
@@ -220,46 +225,81 @@ function splitStat(person, group) {
   return entry?.splits?.[0]?.stat ?? null;
 }
 
-function tile(label, value, hint) {
-  return `<div class="tile"><div class="label">${esc(label)}</div><div class="value">${esc(value)}</div>${hint ? `<div class="hint">${esc(hint)}</div>` : ""}</div>`;
+// --- 株価風の変動トラッキング ---
+// 前回値と比較し、上昇=緑▲ / 下降=赤▼。変動なし・変動から24時間経過は通常色。
+const TRACK_KEY = "ohtaniStatsTrack_v1";
+const TRACK_TTL_MS = 24 * 60 * 60 * 1000;
+let track = {};
+try { track = JSON.parse(localStorage.getItem(TRACK_KEY)) ?? {}; } catch {}
+
+function trendDir(key, num) {
+  if (!key || num == null || Number.isNaN(num)) return 0;
+  const now = Date.now();
+  const rec = track[key];
+  if (!rec) { track[key] = { v: num, t: 0, d: 0 }; return 0; }
+  if (num !== rec.v) {
+    rec.d = num > rec.v ? 1 : -1;
+    rec.v = num;
+    rec.t = now;
+  } else if (rec.d !== 0 && now - rec.t >= TRACK_TTL_MS) {
+    rec.d = 0;
+  }
+  return rec.d;
 }
-function heroFig(label, value) {
-  return `<div><div class="value">${esc(value)}</div><div class="label">${esc(label)}</div></div>`;
+function saveTrack() {
+  try { localStorage.setItem(TRACK_KEY, JSON.stringify(track)); } catch {}
+}
+function trendMarkup(value, key, num) {
+  const d = trendDir(key, num ?? parseFloat(value));
+  const cls = d > 0 ? " up" : d < 0 ? " down" : "";
+  const arrow = d > 0 ? '<span class="arrow">▲</span>' : d < 0 ? '<span class="arrow">▼</span>' : "";
+  return { cls, html: esc(value) + arrow };
+}
+
+function tile(label, value, key, num) {
+  const t = trendMarkup(value, key, num);
+  return `<div class="tile"><div class="label">${esc(label)}</div><div class="value${t.cls}">${t.html}</div></div>`;
+}
+function heroFig(label, value, key, num) {
+  const t = trendMarkup(value, key, num);
+  return `<div><div class="value${t.cls}">${t.html}</div><div class="label">${esc(label)}</div></div>`;
 }
 
 function renderHitting(stat, season) {
   $("hitTitle").innerHTML = `打撃成績 ${season}<span class="en">HITTING</span>`;
   if (!stat) { $("hitHero").innerHTML = ""; $("hitTiles").innerHTML = `<span class="loading">データなし</span>`; return; }
-  $("hitHero").innerHTML = heroFig("本塁打", stat.homeRuns);
+  const k = name => `${season}.hit.${name}`;
+  $("hitHero").innerHTML = heroFig("本塁打", stat.homeRuns, k("hr"));
   $("hitTiles").innerHTML = [
-    tile("打率", stat.avg),
-    tile("打点", stat.rbi),
-    tile("OPS", stat.ops),
-    tile("出塁率", stat.obp),
-    tile("長打率", stat.slg),
-    tile("安打", stat.hits),
-    tile("得点", stat.runs),
-    tile("盗塁", stat.stolenBases),
-    tile("四球", stat.baseOnBalls),
-    tile("三振", stat.strikeOuts),
-    tile("試合", stat.gamesPlayed),
-    tile("打席", stat.plateAppearances),
+    tile("打率", stat.avg, k("avg")),
+    tile("打点", stat.rbi, k("rbi")),
+    tile("OPS", stat.ops, k("ops")),
+    tile("出塁率", stat.obp, k("obp")),
+    tile("長打率", stat.slg, k("slg")),
+    tile("安打", stat.hits, k("hits")),
+    tile("得点", stat.runs, k("runs")),
+    tile("盗塁", stat.stolenBases, k("sb")),
+    tile("四球", stat.baseOnBalls, k("bb")),
+    tile("三振", stat.strikeOuts, k("so")),
+    tile("試合", stat.gamesPlayed, k("g")),
+    tile("打席", stat.plateAppearances, k("pa")),
   ].join("");
 }
 
 function renderPitching(stat, season) {
   $("pitTitle").innerHTML = `投手成績 ${season}<span class="en">PITCHING</span>`;
   if (!stat) { $("pitHero").innerHTML = ""; $("pitTiles").innerHTML = `<span class="loading">データなし</span>`; return; }
-  $("pitHero").innerHTML = heroFig("防御率", stat.era);
+  const k = name => `${season}.pit.${name}`;
+  $("pitHero").innerHTML = heroFig("防御率", stat.era, k("era"));
   $("pitTiles").innerHTML = [
-    tile("勝敗", `${stat.wins}勝${stat.losses}敗`),
-    tile("奪三振", stat.strikeOuts),
-    tile("投球回", stat.inningsPitched),
-    tile("WHIP", stat.whip),
-    tile("K/9", stat.strikeoutsPer9Inn),
-    tile("被打率", stat.avg),
-    tile("与四球", stat.baseOnBalls),
-    tile("先発", stat.gamesStarted),
+    tile("勝敗", `${stat.wins}勝${stat.losses}敗`, k("wins"), Number(stat.wins)),
+    tile("奪三振", stat.strikeOuts, k("so")),
+    tile("投球回", stat.inningsPitched, k("ip")),
+    tile("WHIP", stat.whip, k("whip")),
+    tile("K/9", stat.strikeoutsPer9Inn, k("k9")),
+    tile("被打率", stat.avg, k("avg")),
+    tile("与四球", stat.baseOnBalls, k("bb")),
+    tile("先発", stat.gamesStarted, k("gs")),
   ].join("");
 }
 
@@ -431,6 +471,7 @@ async function refresh() {
       `Shohei Ohtani ・ ${person.currentTeam?.name ?? ""} ・ #${person.primaryNumber ?? "17"}`;
     renderHitting(splitStat(person, "hitting"), season);
     renderPitching(splitStat(person, "pitching"), season);
+    saveTrack();
 
     await loadTeamAbbr(season);
     const logs = await loadGameLogs(season);
