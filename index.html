@@ -266,10 +266,13 @@ const ipToOuts = ip => {
   return (Number(w) || 0) * 3 + (Number(f) || 0);
 };
 
-// tr = { d: 方向(-1/0/1), p: 前回値の表示文字列 }
+// tr = { d: 数値の増減方向(-1/0/1), p: 前回値の表示文字列, neg: 低いほど良い指標か }
+// 矢印は数値の増減(▲=増/▼=減)を表し、色は「良い変化=緑 / 悪い変化=赤」を表す。
+// 三振や防御率など低いほど良い指標(neg)では、増加=▲でも色は赤になる。
 function trendMarkup(value, tr) {
   const d = tr?.d ?? 0;
-  const cls = d > 0 ? " up" : d < 0 ? " down" : "";
+  const colorDir = tr?.neg ? -d : d;
+  const cls = colorDir > 0 ? " up" : colorDir < 0 ? " down" : "";
   const arrow = d > 0 ? '<span class="arrow">▲</span>' : d < 0 ? '<span class="arrow">▼</span>' : "";
   const prev = d !== 0 && tr?.p != null ? `<span class="prev">前回 ${esc(tr.p)}</span>` : "";
   return { cls, html: esc(value) + arrow + prev };
@@ -328,7 +331,7 @@ function computeHitDirs(stat, splits, timeByPk) {
     runs: cnt("runs"),
     sb: cnt("stolenBases"),
     bb: cnt("baseOnBalls"),
-    so: cnt("strikeOuts"),
+    so: { ...cnt("strikeOuts"), neg: true },
     g: { d: sign(rec.length), p: n(stat.gamesPlayed) - rec.length },
     pa: cnt("plateAppearances"),
     avg: { d: cmpAt(parseFloat(stat.avg), bAvg, 3), p: fmt3(bAvg) },
@@ -360,14 +363,14 @@ function computePitDirs(stat, splits, timeByPk) {
   const bK9 = rate(27 * bSO, bOuts);
   const outsToIp = o => `${Math.floor(o / 3)}.${o % 3}`;
   return {
-    era: { d: cmpAt(parseFloat(stat.era), bEra, 2), p: bEra.toFixed(2) },
+    era: { d: cmpAt(parseFloat(stat.era), bEra, 2), p: bEra.toFixed(2), neg: true },
     winloss: { d: S("wins") > 0 ? 1 : S("losses") > 0 ? -1 : 0, p: `${bW}勝${bL}敗` },
     so: cnt("strikeOuts"),
     ip: { d: sign(outsNow - bOuts), p: outsToIp(bOuts) },
-    whip: { d: cmpAt(parseFloat(stat.whip), bWhip, 2), p: bWhip.toFixed(2) },
+    whip: { d: cmpAt(parseFloat(stat.whip), bWhip, 2), p: bWhip.toFixed(2), neg: true },
     k9: { d: cmpAt(parseFloat(stat.strikeoutsPer9Inn), bK9, 2), p: bK9.toFixed(2) },
-    avg: { d: cmpAt(parseFloat(stat.avg), rate(bH, bAB), 3), p: fmt3(rate(bH, bAB)) },
-    bb: cnt("baseOnBalls"),
+    avg: { d: cmpAt(parseFloat(stat.avg), rate(bH, bAB), 3), p: fmt3(rate(bH, bAB)), neg: true },
+    bb: { ...cnt("baseOnBalls"), neg: true },
     gs: cnt("gamesStarted"),
   };
 }
