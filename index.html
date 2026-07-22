@@ -3,13 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>大谷翔平 スタッツトラッカー</title>
+<title>日本人MLBスタッツトラッカー</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#2a78d6">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="大谷スタッツ">
+<meta name="apple-mobile-web-app-title" content="日本人MLB">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" type="image/png" href="icon-192.png">
 <style>
@@ -52,7 +52,23 @@
     color: var(--text-primary);
     line-height: 1.5;
   }
-  .wrap { max-width: 1080px; margin: 0 auto; padding: 24px 20px 56px; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 16px 20px 56px; }
+
+  /* 選手タブ */
+  .tabs {
+    display: flex; gap: 6px; overflow-x: auto; padding: 4px 0 12px;
+    -webkit-overflow-scrolling: touch; scrollbar-width: thin;
+  }
+  .tabs::-webkit-scrollbar { height: 5px; }
+  .tabs::-webkit-scrollbar-thumb { background: var(--baseline); border-radius: 3px; }
+  .tab {
+    flex: 0 0 auto; font: inherit; font-size: 13px; font-weight: 600;
+    color: var(--text-secondary); background: var(--surface-1);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 6px 14px; cursor: pointer; white-space: nowrap;
+  }
+  .tab:hover { border-color: var(--baseline); }
+  .tab.active { color: #fff; background: var(--series-1); border-color: var(--series-1); }
 
   header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; margin-bottom: 6px; }
   header h1 { font-size: 26px; font-weight: 700; }
@@ -184,8 +200,9 @@
 </head>
 <body>
 <div class="wrap">
+  <nav class="tabs" id="tabs" aria-label="選手切り替え"></nav>
   <header>
-    <h1>大谷翔平</h1>
+    <h1 id="playerName">大谷翔平</h1>
     <span class="sub" id="playerMeta">Shohei Ohtani</span>
   </header>
   <div class="toolbar">
@@ -200,13 +217,13 @@
     <div id="gameHitting" hidden></div>
   </div>
 
-  <div class="card">
+  <div class="card" id="hitCard">
     <h2 id="hitTitle">打撃成績<span class="en">HITTING</span></h2>
     <div class="hero" id="hitHero"></div>
     <div class="tiles" id="hitTiles"><span class="loading">読み込み中…</span></div>
   </div>
 
-  <div class="card">
+  <div class="card" id="pitCard">
     <h2 id="pitTitle">投手成績<span class="en">PITCHING</span></h2>
     <div class="hero" id="pitHero"></div>
     <div class="tiles" id="pitTiles"><span class="loading">読み込み中…</span></div>
@@ -218,17 +235,17 @@
     <div id="standBody"></div>
   </div>
 
-  <div class="card">
-    <h2>本塁打数の推移(累計)<span class="en">CUMULATIVE HR</span></h2>
-    <div class="chart-box" id="hrChart"><span class="loading">読み込み中…</span></div>
+  <div class="card" id="chartCard">
+    <h2 id="chartTitle">本塁打数の推移(累計)<span class="en">CUMULATIVE HR</span></h2>
+    <div class="chart-box" id="cumChart"><span class="loading">読み込み中…</span></div>
   </div>
 
-  <div class="card">
+  <div class="card" id="hitLogCard">
     <h2>直近10試合(打撃)<span class="en">LAST 10 GAMES</span></h2>
     <div class="table-scroll" id="hitLog"><span class="loading">読み込み中…</span></div>
   </div>
 
-  <div class="card">
+  <div class="card" id="pitLogCard">
     <h2>直近5登板(投手)<span class="en">LAST 5 STARTS</span></h2>
     <div class="table-scroll" id="pitLog"><span class="loading">読み込み中…</span></div>
   </div>
@@ -238,8 +255,29 @@
 
 <script>
 const API = "https://statsapi.mlb.com/api/v1";
-const PLAYER_ID = 660271; // Shohei Ohtani
 const REFRESH_MS = 60_000;
+
+// MLBの日本人選手(2026シーズン、出場実績あり)
+// pos: TWP=二刀流 / P=投手 / それ以外=野手。lg は順位取得のフォールバック(通常は所属から自動判定)
+const PLAYERS = [
+  { id: 660271, jp: "大谷翔平",   en: "Shohei Ohtani",      pos: "TWP", lg: 104 },
+  { id: 673548, jp: "鈴木誠也",   en: "Seiya Suzuki",       pos: "RF",  lg: 104 },
+  { id: 672960, jp: "岡本和真",   en: "Kazuma Okamoto",     pos: "3B",  lg: 103 },
+  { id: 807799, jp: "吉田正尚",   en: "Masataka Yoshida",   pos: "DH",  lg: 103 },
+  { id: 808959, jp: "村上宗隆",   en: "Munetaka Murakami",  pos: "1B",  lg: 103 },
+  { id: 807747, jp: null,         en: "Rikuu Nishida",      pos: "RF",  lg: 103 },
+  { id: 808967, jp: "山本由伸",   en: "Yoshinobu Yamamoto", pos: "P",   lg: 104 },
+  { id: 808963, jp: "佐々木朗希", en: "Roki Sasaki",        pos: "P",   lg: 104 },
+  { id: 673540, jp: "千賀滉大",   en: "Kodai Senga",        pos: "P",   lg: 104 },
+  { id: 684007, jp: "今永昇太",   en: "Shota Imanaga",      pos: "P",   lg: 104 },
+  { id: 579328, jp: "菊池雄星",   en: "Yusei Kikuchi",      pos: "P",   lg: 103 },
+  { id: 608372, jp: "菅野智之",   en: "Tomoyuki Sugano",    pos: "P",   lg: 104 },
+  { id: 673513, jp: "松井裕樹",   en: "Yuki Matsui",        pos: "P",   lg: 104 },
+  { id: 837227, jp: "今井達也",   en: "Tatsuya Imai",       pos: "P",   lg: 103 },
+];
+let activePlayer = PLAYERS[0];
+let PLAYER_ID = activePlayer.id;
+let currentRole = "bat"; // "bat" | "pit" | "two"
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -436,14 +474,16 @@ function renderPitching(stat, season, dirs = {}, ranks = {}) {
   ].join("");
 }
 
-// --- team abbreviation map (opponent names -> AZ, SD, ...) ---
+// --- team abbreviation / league map (opponent names -> AZ, SD, ...) ---
 let teamAbbr = null;
+let teamLeague = null;
 async function loadTeamAbbr(season) {
   if (teamAbbr) return;
   try {
     const data = await fetchJSON(`${API}/teams?sportId=1&season=${season}`);
     teamAbbr = Object.fromEntries((data.teams ?? []).map(t => [t.id, t.abbreviation]));
-  } catch { teamAbbr = {}; }
+    teamLeague = Object.fromEntries((data.teams ?? []).map(t => [t.id, t.league?.id]));
+  } catch { teamAbbr = {}; teamLeague = {}; }
 }
 const oppLabel = s =>
   s.opponent?.abbreviation ?? teamAbbr?.[s.opponent?.id] ?? s.opponent?.name ?? "";
@@ -493,35 +533,36 @@ function renderPitLog(splits) {
     </tr>`).join("")}</tbody></table>`;
 }
 
-// --- cumulative HR chart (single series, 2px line, hover tooltip) ---
-function renderHRChart(splits) {
-  const box = $("hrChart");
+// --- cumulative chart (single series, 2px line, hover tooltip) ---
+// field: 集計するstatフィールド(homeRuns / strikeOuts など), unitJa: 単位(本 / 奪三振)
+function renderCumChart(splits, field, unitJa) {
+  const box = $("cumChart");
   if (!splits.length) { box.innerHTML = `<span class="loading">データなし</span>`; return; }
   const pts = [];
   let total = 0;
-  splits.forEach((s, i) => { total += s.stat.homeRuns ?? 0; pts.push({ g: i + 1, hr: total, date: s.date }); });
+  splits.forEach((s, i) => { total += Number(s.stat[field]) || 0; pts.push({ g: i + 1, v: total, date: s.date }); });
 
-  const W = 960, H = 260, padL = 36, padR = 16, padT = 12, padB = 28;
-  const maxHR = Math.max(4, total);
+  const W = 960, H = 260, padL = 40, padR = 16, padT = 12, padB = 28;
+  const maxV = Math.max(4, total);
   const x = g => padL + (g - 1) / Math.max(1, pts.length - 1) * (W - padL - padR);
-  const y = v => H - padB - v / maxHR * (H - padT - padB);
+  const y = v => H - padB - v / maxV * (H - padT - padB);
 
   const yTicks = [];
-  const step = maxHR <= 10 ? 2 : maxHR <= 30 ? 5 : 10;
-  for (let v = 0; v <= maxHR; v += step) yTicks.push(v);
+  const step = maxV <= 10 ? 2 : maxV <= 30 ? 5 : maxV <= 80 ? 10 : 25;
+  for (let v = 0; v <= maxV; v += step) yTicks.push(v);
 
-  const path = pts.map((p, i) => `${i ? "L" : "M"}${x(p.g).toFixed(1)},${y(p.hr).toFixed(1)}`).join("");
+  const path = pts.map((p, i) => `${i ? "L" : "M"}${x(p.g).toFixed(1)},${y(p.v).toFixed(1)}`).join("");
   const area = `${path}L${x(pts[pts.length - 1].g).toFixed(1)},${y(0)}L${x(1).toFixed(1)},${y(0)}Z`;
   const last = pts[pts.length - 1];
 
-  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="本塁打数の累計推移">
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(unitJa)}の累計推移">
     ${yTicks.map(v => `<line x1="${padL}" y1="${y(v)}" x2="${W - padR}" y2="${y(v)}" stroke="var(--grid)" stroke-width="1"/>
       <text x="${padL - 8}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="var(--text-muted)" font-variant-numeric="tabular-nums">${v}</text>`).join("")}
     <line x1="${padL}" y1="${y(0)}" x2="${W - padR}" y2="${y(0)}" stroke="var(--baseline)" stroke-width="1"/>
     <path d="${area}" fill="var(--series-1-wash)"/>
     <path d="${path}" fill="none" stroke="var(--series-1)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-    <circle cx="${x(last.g)}" cy="${y(last.hr)}" r="4" fill="var(--series-1)" stroke="var(--surface-1)" stroke-width="2"/>
-    <text x="${Math.min(x(last.g) + 8, W - 30)}" y="${Math.max(y(last.hr) - 8, 12)}" font-size="12" font-weight="600" fill="var(--text-primary)">${last.hr}本</text>
+    <circle cx="${x(last.g)}" cy="${y(last.v)}" r="4" fill="var(--series-1)" stroke="var(--surface-1)" stroke-width="2"/>
+    <text x="${Math.min(x(last.g) + 8, W - 60)}" y="${Math.max(y(last.v) - 8, 12)}" font-size="12" font-weight="600" fill="var(--text-primary)">${last.v}${esc(unitJa)}</text>
     <text x="${padL}" y="${H - 8}" font-size="11" fill="var(--text-muted)">開幕</text>
     <text x="${W - padR}" y="${H - 8}" text-anchor="end" font-size="11" fill="var(--text-muted)">${pts.length}試合目</text>
     <line id="xhair" x1="0" y1="${padT}" x2="0" y2="${y(0)}" stroke="var(--baseline)" stroke-width="1" visibility="hidden"/>
@@ -539,10 +580,10 @@ function renderHRChart(splits) {
     const p = pts[Math.min(Math.max(g, 1), pts.length) - 1];
     xhair.setAttribute("x1", x(p.g)); xhair.setAttribute("x2", x(p.g));
     xhair.setAttribute("visibility", "visible");
-    xdot.setAttribute("cx", x(p.g)); xdot.setAttribute("cy", y(p.hr));
+    xdot.setAttribute("cx", x(p.g)); xdot.setAttribute("cy", y(p.v));
     xdot.setAttribute("visibility", "visible");
     tip.style.display = "block";
-    tip.innerHTML = `${esc(shortDate(p.date))} ・ ${p.g}試合目<br><b>累計 ${p.hr} 本塁打</b>`;
+    tip.innerHTML = `${esc(shortDate(p.date))} ・ ${p.g}試合目<br><b>累計 ${p.v} ${esc(unitJa)}</b>`;
     const bx = box.getBoundingClientRect();
     let left = ev.clientX - bx.left + 14;
     if (left + tip.offsetWidth > bx.width - 8) left = ev.clientX - bx.left - tip.offsetWidth - 14;
@@ -567,9 +608,9 @@ const PIT_RANK_CATS = {
   inningsPitched: "ip", walksAndHitsPerInningPitched: "whip", strikeoutsPer9Inn: "k9",
 };
 
-async function loadRanks(season) {
+async function loadRanks(season, leagueId = 104) {
   const get = async (cats, group) => {
-    const url = `${API}/stats/leaders?leaderCategories=${Object.keys(cats).join(",")}&statGroup=${group}&leagueId=104&season=${season}&limit=250`;
+    const url = `${API}/stats/leaders?leaderCategories=${Object.keys(cats).join(",")}&statGroup=${group}&leagueId=${leagueId}&season=${season}&limit=250`;
     const data = await fetchJSON(url);
     const out = {};
     (data.leagueLeaders ?? []).forEach(cat => {
@@ -693,69 +734,90 @@ const paClass = ev => {
 };
 const halfJa = h => (String(h).toLowerCase().startsWith("top") ? "表" : "裏");
 
-async function loadInGameHitting(gamePk, isLive) {
+function findBoxPlayer(box) {
+  for (const side of ["away", "home"]) {
+    const players = box.teams?.[side]?.players ?? {};
+    const p = players[`ID${PLAYER_ID}`] ?? Object.values(players).find(x => x.person?.id === PLAYER_ID);
+    if (p) return p;
+  }
+  return null;
+}
+
+// その試合の打撃セクション(ライン + 打席ごとの結果)
+function battingSectionHtml(bat, pbp, isLive) {
+  if (!bat || bat.plateAppearances == null || bat.plateAppearances === 0) {
+    return isLive ? `<div class="line">この試合(打撃) まだ打席なし</div>` : "";
+  }
+  const bits = [];
+  if (bat.homeRuns) bits.push(`本塁打${bat.homeRuns}`);
+  if (bat.rbi) bits.push(`${bat.rbi}打点`);
+  if (bat.runs) bits.push(`${bat.runs}得点`);
+  if (bat.doubles) bits.push(`二塁打${bat.doubles}`);
+  if (bat.triples) bits.push(`三塁打${bat.triples}`);
+  if (bat.baseOnBalls) bits.push(`四球${bat.baseOnBalls}`);
+  if (bat.strikeOuts) bits.push(`三振${bat.strikeOuts}`);
+  if (bat.stolenBases) bits.push(`盗塁${bat.stolenBases}`);
+
+  let pas = "";
+  if (pbp?.allPlays) {
+    pas = pbp.allPlays
+      .filter(p => p.matchup?.batter?.id === PLAYER_ID && p.about?.isComplete)
+      .map(p => {
+        const inn = `${p.about.inning}回${halfJa(p.about.halfInning)}`;
+        const ev = p.result?.event ?? "";
+        const rbiTxt = p.result?.rbi ? ` +${p.result.rbi}` : "";
+        return `<span class="${paClass(ev)}"><span class="inn">${esc(inn)}</span>${esc(eventJa(ev))}${rbiTxt}</span>`;
+      }).join("");
+    if (isLive) {
+      const cur = pbp.allPlays.find(p => !p.about?.isComplete);
+      if (cur && cur.matchup?.batter?.id === PLAYER_ID) {
+        const c = cur.count ?? {};
+        const inn = `${cur.about?.inning ?? ""}回${halfJa(cur.about?.halfInning)}`;
+        pas += `<span class="pa now"><span class="inn">${esc(inn)}</span>打席中 ${c.balls ?? 0}-${c.strikes ?? 0}</span>`;
+      }
+    }
+  }
+  return `<div class="line">この試合(打撃) <span>${bat.hits}-${bat.atBats}</span>` +
+    `${bits.length ? `<span class="sum">${esc(bits.join(" ・ "))}</span>` : ""}</div>` +
+    `${pas ? `<div class="pas">${pas}</div>` : ""}`;
+}
+
+// その試合の投球セクション
+function pitchingSectionHtml(pit) {
+  if (!pit || pit.inningsPitched == null || ipToOuts(pit.inningsPitched) === 0) return "";
+  const bits = [];
+  bits.push(`${pit.strikeOuts ?? 0}奪三振`);
+  bits.push(`${pit.baseOnBalls ?? 0}四球`);
+  bits.push(`被安打${pit.hits ?? 0}`);
+  if (pit.homeRuns) bits.push(`被弾${pit.homeRuns}`);
+  const pitches = pit.numberOfPitches ?? pit.pitchesThrown;
+  if (pitches) bits.push(`${pitches}球`);
+  return `<div class="line">この試合(投球) <span>${esc(pit.inningsPitched)}回 ${pit.earnedRuns ?? 0}自責(${pit.runs ?? 0}失点)</span>` +
+    `<span class="sum">${esc(bits.join(" ・ "))}</span></div>`;
+}
+
+async function loadInGameStats(gamePk, isLive) {
   if (!gamePk || inGameLoading) return;
   inGameLoading = true;
   try {
+    const wantPBP = currentRole !== "pit"; // 打者は打席結果のためPBPが必要
     const [box, pbp] = await Promise.all([
       fetchJSON(`${API}/game/${gamePk}/boxscore`),
-      fetchJSON(`${API}/game/${gamePk}/playByPlay`).catch(() => null),
+      wantPBP ? fetchJSON(`${API}/game/${gamePk}/playByPlay`).catch(() => null) : Promise.resolve(null),
     ]);
-    let bat = null;
-    for (const side of ["away", "home"]) {
-      const players = box.teams?.[side]?.players ?? {};
-      const p = players[`ID${PLAYER_ID}`] ?? Object.values(players).find(x => x.person?.id === PLAYER_ID);
-      if (p) { bat = p.stats?.batting; break; }
-    }
-    if (!bat || bat.plateAppearances == null || bat.plateAppearances === 0) {
-      // まだ打席に立っていない
-      if (isLive) {
-        $("gameHitting").innerHTML = `<div class="line">この試合 まだ打席なし</div>`;
-        $("gameHitting").hidden = false;
-      } else {
-        $("gameHitting").hidden = true;
-      }
-      return;
-    }
+    const p = findBoxPlayer(box);
+    const bat = p?.stats?.batting;
+    const pit = p?.stats?.pitching;
 
-    const bits = [];
-    if (bat.homeRuns) bits.push(`本塁打${bat.homeRuns}`);
-    if (bat.rbi) bits.push(`${bat.rbi}打点`);
-    if (bat.runs) bits.push(`${bat.runs}得点`);
-    if (bat.doubles) bits.push(`二塁打${bat.doubles}`);
-    if (bat.triples) bits.push(`三塁打${bat.triples}`);
-    if (bat.baseOnBalls) bits.push(`四球${bat.baseOnBalls}`);
-    if (bat.strikeOuts) bits.push(`三振${bat.strikeOuts}`);
-    if (bat.stolenBases) bits.push(`盗塁${bat.stolenBases}`);
+    let html = "";
+    if (currentRole !== "pit") html += battingSectionHtml(bat, pbp, isLive);
+    if (currentRole === "pit" || currentRole === "two") html += pitchingSectionHtml(pit);
 
-    let pas = "";
-    if (pbp?.allPlays) {
-      pas = pbp.allPlays
-        .filter(p => p.matchup?.batter?.id === PLAYER_ID && p.about?.isComplete)
-        .map(p => {
-          const inn = `${p.about.inning}回${halfJa(p.about.halfInning)}`;
-          const ev = p.result?.event ?? "";
-          const rbiTxt = p.result?.rbi ? ` +${p.result.rbi}` : "";
-          return `<span class="${paClass(ev)}"><span class="inn">${esc(inn)}</span>${esc(eventJa(ev))}${rbiTxt}</span>`;
-        }).join("");
-      // 打席中(ライブのみ): 未完了プレーの打者が大谷なら現在のカウントを表示
-      if (isLive) {
-        const cur = pbp.allPlays.find(p => !p.about?.isComplete);
-        if (cur && cur.matchup?.batter?.id === PLAYER_ID) {
-          const c = cur.count ?? {};
-          const inn = `${cur.about?.inning ?? ""}回${halfJa(cur.about?.halfInning)}`;
-          pas += `<span class="pa now"><span class="inn">${esc(inn)}</span>打席中 ${c.balls ?? 0}-${c.strikes ?? 0}</span>`;
-        }
-      }
-    }
-
-    $("gameHitting").innerHTML =
-      `<div class="line">この試合 <span>${bat.hits}-${bat.atBats}</span>` +
-      `${bits.length ? `<span class="sum">${esc(bits.join(" ・ "))}</span>` : ""}</div>` +
-      `${pas ? `<div class="pas">${pas}</div>` : ""}`;
+    if (!html) { $("gameHitting").hidden = true; return; }
+    $("gameHitting").innerHTML = html;
     $("gameHitting").hidden = false;
   } catch (e) {
-    console.error("in-game hitting:", e);
+    console.error("in-game stats:", e);
     $("gameHitting").hidden = true;
   } finally {
     inGameLoading = false;
@@ -797,12 +859,12 @@ function renderGameBanner(games) {
     ${score}`;
   $("gameCard").hidden = false;
 
-  // その試合の打撃(ライブ・終了とも表示。試合前は非表示)
+  // その試合の成績(ライブ・終了とも表示。試合前は非表示)
   const isLive = state === "Live";
   if (state === "Preview") {
     $("gameHitting").hidden = true;
   } else {
-    loadInGameHitting(game.gamePk, isLive);
+    loadInGameStats(game.gamePk, isLive);
   }
 
   // ライブ中は高速ポーリング、それ以外は停止(冪等)
@@ -814,36 +876,111 @@ function renderGameBanner(games) {
   }
 }
 
+// --- タブ(選手切り替え) ---
+function renderTabs() {
+  $("tabs").innerHTML = PLAYERS.map(p =>
+    `<button class="tab${p.id === PLAYER_ID ? " active" : ""}" data-id="${p.id}">${esc(p.jp ?? p.en)}</button>`
+  ).join("");
+  const active = $("tabs").querySelector(".tab.active");
+  if (active) active.scrollIntoView({ inline: "center", block: "nearest" });
+}
+
+function resetView() {
+  $("playerName").textContent = activePlayer.jp ?? activePlayer.en;
+  $("playerMeta").textContent = "";
+  $("gameCard").hidden = true;
+  $("gameHitting").hidden = true;
+  $("standCard").hidden = true;
+  $("hitCard").hidden = false; $("pitCard").hidden = false;
+  $("hitLogCard").hidden = false; $("pitLogCard").hidden = false;
+  $("hitHero").innerHTML = ""; $("hitTiles").innerHTML = `<span class="loading">読み込み中…</span>`;
+  $("pitHero").innerHTML = ""; $("pitTiles").innerHTML = `<span class="loading">読み込み中…</span>`;
+  $("cumChart").innerHTML = `<span class="loading">読み込み中…</span>`;
+  $("hitLog").innerHTML = `<span class="loading">読み込み中…</span>`;
+  $("pitLog").innerHTML = `<span class="loading">読み込み中…</span>`;
+  $("stamp").textContent = "読み込み中…";
+}
+
+function switchPlayer(id) {
+  const pl = PLAYERS.find(p => p.id === id);
+  if (!pl || id === PLAYER_ID) return;
+  activePlayer = pl;
+  PLAYER_ID = id;
+  if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
+  try { history.replaceState(null, "", `#${id}`); } catch {}
+  renderTabs();
+  resetView();
+  window.scrollTo({ top: 0 });
+  refresh();
+}
+
 // --- orchestration ---
 let refreshing = false;
 async function refresh() {
   if (refreshing) return;
   refreshing = true;
   $("refreshBtn").disabled = true;
+  const reqId = PLAYER_ID; // 更新中にタブが切り替わったら結果を破棄
   try {
     const { season, person } = await resolveSeasonData();
+    if (reqId !== PLAYER_ID) return;
     currentTeamId = person.currentTeam?.id ?? null;
+
+    const pos = person.primaryPosition?.abbreviation ?? activePlayer.pos;
+    const isPitcher = pos === "P";
+    const isTwoWay = pos === "TWP";
+    const showHit = !isPitcher;            // 二刀流・野手は打撃を表示
+    const showPit = isPitcher || isTwoWay; // 投手・二刀流は投球を表示
+    currentRole = isTwoWay ? "two" : isPitcher ? "pit" : "bat";
+
+    $("playerName").textContent = activePlayer.jp ?? person.fullName;
     $("playerMeta").textContent =
-      `Shohei Ohtani ・ ${person.currentTeam?.name ?? ""} ・ #${person.primaryNumber ?? "17"}`;
+      `${person.fullName} ・ ${person.currentTeam?.name ?? ""}${person.primaryNumber ? " ・ #" + person.primaryNumber : ""}`;
+
     await loadTeamAbbr(season);
+    const leagueId = teamLeague?.[currentTeamId] ?? activePlayer.lg ?? 104;
+
     const [logs, games, standings, ranks] = await Promise.all([
       loadGameLogs(season),
-      fetchScheduleGames(person.currentTeam?.id).catch(() => []),
+      fetchScheduleGames(currentTeamId).catch(() => []),
       loadStandings(season).catch(() => []),
-      loadRanks(season).catch(() => ({ hit: {}, pit: {} })),
+      loadRanks(season, leagueId).catch(() => ({ hit: {}, pit: {} })),
     ]);
+    if (reqId !== PLAYER_ID) return;
     const timeByPk = new Map(games.map(g => [g.gamePk, Date.parse(g.gameDate)]));
 
     const hitStat = splitStat(person, "hitting");
     const pitStat = splitStat(person, "pitching");
-    renderHitting(hitStat, season, computeHitDirs(hitStat, logs.hitting, timeByPk), ranks.hit);
-    renderPitching(pitStat, season, computePitDirs(pitStat, logs.pitching, timeByPk), ranks.pit);
 
-    renderHitLog(logs.hitting);
-    renderPitLog(logs.pitching);
-    renderHRChart(logs.hitting);
+    // 打撃カード
+    if (showHit && hitStat) {
+      $("hitCard").hidden = false;
+      renderHitting(hitStat, season, computeHitDirs(hitStat, logs.hitting, timeByPk), ranks.hit);
+    } else { $("hitCard").hidden = true; }
+
+    // 投手カード
+    if (showPit && pitStat) {
+      $("pitCard").hidden = false;
+      renderPitching(pitStat, season, computePitDirs(pitStat, logs.pitching, timeByPk), ranks.pit);
+    } else { $("pitCard").hidden = true; }
+
+    // 試合ログ
+    $("hitLogCard").hidden = !(showHit && logs.hitting.length);
+    if (showHit && logs.hitting.length) renderHitLog(logs.hitting);
+    $("pitLogCard").hidden = !(showPit && logs.pitching.length);
+    if (showPit && logs.pitching.length) renderPitLog(logs.pitching);
+
+    // 累計チャート(投手=奪三振 / それ以外=本塁打)
+    if (isPitcher) {
+      $("chartTitle").innerHTML = `奪三振数の推移(累計)<span class="en">CUMULATIVE K</span>`;
+      renderCumChart(logs.pitching, "strikeOuts", "奪三振");
+    } else {
+      $("chartTitle").innerHTML = `本塁打数の推移(累計)<span class="en">CUMULATIVE HR</span>`;
+      renderCumChart(logs.hitting, "homeRuns", "本");
+    }
+
     renderGameBanner(games);
-    renderStandings(standings, person.currentTeam?.id);
+    renderStandings(standings, currentTeamId);
 
     $("stamp").textContent = `最終更新 ${new Date().toLocaleTimeString("ja-JP")}`;
   } catch (err) {
@@ -855,7 +992,19 @@ async function refresh() {
   }
 }
 
+// 初期化: URLハッシュで選手を指定可能(例: #808967)
+const hashId = Number(location.hash.replace("#", ""));
+if (PLAYERS.some(p => p.id === hashId)) {
+  activePlayer = PLAYERS.find(p => p.id === hashId);
+  PLAYER_ID = hashId;
+}
+$("tabs").addEventListener("click", e => {
+  const b = e.target.closest(".tab");
+  if (b) switchPlayer(Number(b.dataset.id));
+});
 $("refreshBtn").addEventListener("click", refresh);
+renderTabs();
+resetView();
 refresh();
 setInterval(refresh, REFRESH_MS);
 </script>

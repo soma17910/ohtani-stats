@@ -1,6 +1,6 @@
 {
-  "name": "大谷翔平 スタッツトラッカー",
-  "short_name": "大谷スタッツ",
+  "name": "日本人MLBスタッツトラッカー",
+  "short_name": "日本人MLB",
   "start_url": ".",
   "scope": ".",
   "display": "standalone",
