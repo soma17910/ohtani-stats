@@ -89,6 +89,30 @@
   }
   .badge.live { color: var(--live); border-color: currentColor; }
 
+  /* 試合中の打撃(リアルタイム) */
+  #gameHitting { width: 100%; margin-top: 6px; }
+  #gameHitting .line {
+    font-size: 20px; font-weight: 600; margin-bottom: 8px;
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  }
+  #gameHitting .line .sum { font-size: 13px; font-weight: 500; color: var(--text-secondary); }
+  #gameHitting .pas { display: flex; flex-wrap: wrap; gap: 6px; }
+  .pa {
+    font-size: 12px; padding: 3px 9px; border-radius: 999px;
+    border: 1px solid var(--border); color: var(--text-secondary);
+    display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+  }
+  .pa .inn { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .pa.hit { border-color: var(--good); color: var(--good); font-weight: 600; }
+  .pa.hr { background: var(--good); color: #fff; border-color: var(--good); font-weight: 700; }
+  .pa.walk { border-color: var(--series-1); color: var(--series-1); }
+  .pa.now {
+    border-color: var(--live); color: var(--live); font-weight: 700;
+    animation: paPulse 1.6s ease-in-out infinite;
+  }
+  @keyframes paPulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+  @media (prefers-reduced-motion: reduce) { .pa.now { animation: none; } }
+
   /* stat tiles */
   .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 10px; }
   .tile { padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; }
@@ -173,6 +197,7 @@
   <div class="card" id="gameCard" hidden>
     <h2>直近の試合<span class="en">GAME</span></h2>
     <div class="matchup" id="gameBody"></div>
+    <div id="gameHitting" hidden></div>
   </div>
 
   <div class="card">
@@ -645,6 +670,105 @@ async function fetchScheduleGames(teamId) {
   return (data.dates ?? []).flatMap(d => d.games ?? []);
 }
 
+// --- 試合中の打撃(リアルタイム) ---
+const LIVE_POLL_MS = 25_000;
+let liveTimer = null;
+let currentTeamId = null;
+let inGameLoading = false;
+
+const EVENT_JA = {
+  "Single": "安打", "Double": "二塁打", "Triple": "三塁打", "Home Run": "本塁打",
+  "Strikeout": "三振", "Strikeout Double Play": "三振", "Walk": "四球", "Intent Walk": "敬遠",
+  "Hit By Pitch": "死球", "Groundout": "ゴロ", "Bunt Groundout": "犠打", "Flyout": "飛球",
+  "Lineout": "ライナー", "Pop Out": "飛球", "Forceout": "封殺", "Fielders Choice": "野選",
+  "Fielders Choice Out": "野選", "Grounded Into DP": "併殺", "Double Play": "併殺",
+  "Field Error": "失策", "Sac Fly": "犠飛", "Sac Bunt": "犠打", "Catcher Interference": "打撃妨害",
+};
+const eventJa = ev => EVENT_JA[ev] ?? ev;
+const paClass = ev => {
+  if (/Home Run/i.test(ev)) return "pa hr";
+  if (/^(Single|Double|Triple)$/i.test(ev)) return "pa hit";
+  if (/Walk|Hit By Pitch/i.test(ev)) return "pa walk";
+  return "pa out";
+};
+const halfJa = h => (String(h).toLowerCase().startsWith("top") ? "表" : "裏");
+
+async function loadInGameHitting(gamePk, isLive) {
+  if (!gamePk || inGameLoading) return;
+  inGameLoading = true;
+  try {
+    const [box, pbp] = await Promise.all([
+      fetchJSON(`${API}/game/${gamePk}/boxscore`),
+      fetchJSON(`${API}/game/${gamePk}/playByPlay`).catch(() => null),
+    ]);
+    let bat = null;
+    for (const side of ["away", "home"]) {
+      const players = box.teams?.[side]?.players ?? {};
+      const p = players[`ID${PLAYER_ID}`] ?? Object.values(players).find(x => x.person?.id === PLAYER_ID);
+      if (p) { bat = p.stats?.batting; break; }
+    }
+    if (!bat || bat.plateAppearances == null || bat.plateAppearances === 0) {
+      // まだ打席に立っていない
+      if (isLive) {
+        $("gameHitting").innerHTML = `<div class="line">この試合 まだ打席なし</div>`;
+        $("gameHitting").hidden = false;
+      } else {
+        $("gameHitting").hidden = true;
+      }
+      return;
+    }
+
+    const bits = [];
+    if (bat.homeRuns) bits.push(`本塁打${bat.homeRuns}`);
+    if (bat.rbi) bits.push(`${bat.rbi}打点`);
+    if (bat.runs) bits.push(`${bat.runs}得点`);
+    if (bat.doubles) bits.push(`二塁打${bat.doubles}`);
+    if (bat.triples) bits.push(`三塁打${bat.triples}`);
+    if (bat.baseOnBalls) bits.push(`四球${bat.baseOnBalls}`);
+    if (bat.strikeOuts) bits.push(`三振${bat.strikeOuts}`);
+    if (bat.stolenBases) bits.push(`盗塁${bat.stolenBases}`);
+
+    let pas = "";
+    if (pbp?.allPlays) {
+      pas = pbp.allPlays
+        .filter(p => p.matchup?.batter?.id === PLAYER_ID && p.about?.isComplete)
+        .map(p => {
+          const inn = `${p.about.inning}回${halfJa(p.about.halfInning)}`;
+          const ev = p.result?.event ?? "";
+          const rbiTxt = p.result?.rbi ? ` +${p.result.rbi}` : "";
+          return `<span class="${paClass(ev)}"><span class="inn">${esc(inn)}</span>${esc(eventJa(ev))}${rbiTxt}</span>`;
+        }).join("");
+      // 打席中(ライブのみ): 未完了プレーの打者が大谷なら現在のカウントを表示
+      if (isLive) {
+        const cur = pbp.allPlays.find(p => !p.about?.isComplete);
+        if (cur && cur.matchup?.batter?.id === PLAYER_ID) {
+          const c = cur.count ?? {};
+          const inn = `${cur.about?.inning ?? ""}回${halfJa(cur.about?.halfInning)}`;
+          pas += `<span class="pa now"><span class="inn">${esc(inn)}</span>打席中 ${c.balls ?? 0}-${c.strikes ?? 0}</span>`;
+        }
+      }
+    }
+
+    $("gameHitting").innerHTML =
+      `<div class="line">この試合 <span>${bat.hits}-${bat.atBats}</span>` +
+      `${bits.length ? `<span class="sum">${esc(bits.join(" ・ "))}</span>` : ""}</div>` +
+      `${pas ? `<div class="pas">${pas}</div>` : ""}`;
+    $("gameHitting").hidden = false;
+  } catch (e) {
+    console.error("in-game hitting:", e);
+    $("gameHitting").hidden = true;
+  } finally {
+    inGameLoading = false;
+  }
+}
+
+async function liveTick() {
+  try {
+    const games = await fetchScheduleGames(currentTeamId);
+    renderGameBanner(games);
+  } catch (e) { console.error("liveTick:", e); }
+}
+
 function renderGameBanner(games) {
   if (!games.length) { $("gameCard").hidden = true; return; }
   const live = games.find(g => g.status?.abstractGameState === "Live");
@@ -672,6 +796,22 @@ function renderGameBanner(games) {
     <span class="teams">${esc(away.team?.abbreviation ?? away.team?.name)} @ ${esc(home.team?.abbreviation ?? home.team?.name)}</span>
     ${score}`;
   $("gameCard").hidden = false;
+
+  // その試合の打撃(ライブ・終了とも表示。試合前は非表示)
+  const isLive = state === "Live";
+  if (state === "Preview") {
+    $("gameHitting").hidden = true;
+  } else {
+    loadInGameHitting(game.gamePk, isLive);
+  }
+
+  // ライブ中は高速ポーリング、それ以外は停止(冪等)
+  if (isLive) {
+    if (!liveTimer) liveTimer = setInterval(liveTick, LIVE_POLL_MS);
+  } else if (liveTimer) {
+    clearInterval(liveTimer);
+    liveTimer = null;
+  }
 }
 
 // --- orchestration ---
@@ -682,6 +822,7 @@ async function refresh() {
   $("refreshBtn").disabled = true;
   try {
     const { season, person } = await resolveSeasonData();
+    currentTeamId = person.currentTeam?.id ?? null;
     $("playerMeta").textContent =
       `Shohei Ohtani ・ ${person.currentTeam?.name ?? ""} ・ #${person.primaryNumber ?? "17"}`;
     await loadTeamAbbr(season);
