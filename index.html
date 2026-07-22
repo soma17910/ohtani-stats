@@ -70,6 +70,33 @@
   .tab:hover { border-color: var(--baseline); }
   .tab.active { color: #fff; background: var(--series-1); border-color: var(--series-1); }
 
+  /* 選手検索 */
+  .search { position: relative; margin-bottom: 10px; }
+  #search {
+    width: 100%; font: inherit; font-size: 15px;
+    color: var(--text-primary); background: var(--surface-1);
+    border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 14px; box-sizing: border-box;
+  }
+  #search:focus { outline: none; border-color: var(--series-1); }
+  .search-results {
+    position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 4px);
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 10px; box-shadow: 0 6px 24px rgba(0,0,0,.18);
+    max-height: 320px; overflow-y: auto; padding: 4px;
+  }
+  .sr-item {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+    width: 100%; font: inherit; text-align: left; cursor: pointer;
+    background: transparent; border: none; border-radius: 7px; padding: 9px 10px;
+    color: var(--text-primary);
+  }
+  .sr-item:hover { background: var(--series-1-wash); }
+  .sr-name { font-weight: 600; }
+  .sr-meta { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+  .sr-empty { padding: 10px; color: var(--text-muted); font-size: 13px; }
+  .fav-label { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
+
   header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; margin-bottom: 6px; }
   header h1 { font-size: 26px; font-weight: 700; }
   .sub { color: var(--text-secondary); font-size: 14px; }
@@ -200,6 +227,11 @@
 </head>
 <body>
 <div class="wrap">
+  <div class="search">
+    <input id="search" type="search" placeholder="🔍 選手を検索(英語名 例: Trout, Judge)…" autocomplete="off" spellcheck="false" />
+    <div class="search-results" id="searchResults" hidden></div>
+  </div>
+  <div class="fav-label">お気に入り(日本人選手)</div>
   <nav class="tabs" id="tabs" aria-label="選手切り替え"></nav>
   <header>
     <h1 id="playerName">大谷翔平</h1>
@@ -438,11 +470,13 @@ function computePitDirs(stat, splits, timeByPk) {
   };
 }
 
-function renderHitting(stat, season, dirs = {}, ranks = {}) {
+const fmtWar = v => (v == null ? "—" : (v >= 0 ? "" : "") + Number(v).toFixed(1));
+
+function renderHitting(stat, season, dirs = {}, ranks = {}, saber = null) {
   $("hitTitle").innerHTML = `打撃成績 ${season}<span class="en">HITTING</span>`;
   if (!stat) { $("hitHero").innerHTML = ""; $("hitTiles").innerHTML = `<span class="loading">データなし</span>`; return; }
   $("hitHero").innerHTML = heroFig("本塁打", stat.homeRuns, dirs.hr, ranks.hr);
-  $("hitTiles").innerHTML = [
+  const tiles = [
     tile("打率", stat.avg, dirs.avg, ranks.avg),
     tile("打点", stat.rbi, dirs.rbi, ranks.rbi),
     tile("OPS", stat.ops, dirs.ops, ranks.ops),
@@ -455,14 +489,20 @@ function renderHitting(stat, season, dirs = {}, ranks = {}) {
     tile("三振", stat.strikeOuts, dirs.so),
     tile("試合", stat.gamesPlayed, dirs.g),
     tile("打席", stat.plateAppearances, dirs.pa),
-  ].join("");
+  ];
+  if (saber) {
+    tiles.push(tile("fWAR", fmtWar(saber.war)));
+    if (saber.wRcPlus != null) tiles.push(tile("wRC+", Math.round(saber.wRcPlus)));
+    if (saber.woba != null) tiles.push(tile("wOBA", fmt3(saber.woba)));
+  }
+  $("hitTiles").innerHTML = tiles.join("");
 }
 
-function renderPitching(stat, season, dirs = {}, ranks = {}) {
+function renderPitching(stat, season, dirs = {}, ranks = {}, saber = null) {
   $("pitTitle").innerHTML = `投手成績 ${season}<span class="en">PITCHING</span>`;
   if (!stat) { $("pitHero").innerHTML = ""; $("pitTiles").innerHTML = `<span class="loading">データなし</span>`; return; }
   $("pitHero").innerHTML = heroFig("防御率", stat.era, dirs.era, ranks.era);
-  $("pitTiles").innerHTML = [
+  const tiles = [
     tile("勝敗", `${stat.wins}勝${stat.losses}敗`, dirs.winloss, ranks.winloss),
     tile("奪三振", stat.strikeOuts, dirs.so, ranks.so),
     tile("投球回", stat.inningsPitched, dirs.ip, ranks.ip),
@@ -471,7 +511,13 @@ function renderPitching(stat, season, dirs = {}, ranks = {}) {
     tile("被打率", stat.avg, dirs.avg),
     tile("与四球", stat.baseOnBalls, dirs.bb),
     tile("先発", stat.gamesStarted, dirs.gs),
-  ].join("");
+  ];
+  if (saber) {
+    tiles.push(tile("fWAR", fmtWar(saber.war)));
+    if (saber.fip != null) tiles.push(tile("FIP", Number(saber.fip).toFixed(2)));
+    if (saber.xfip != null) tiles.push(tile("xFIP", Number(saber.xfip).toFixed(2)));
+  }
+  $("pitTiles").innerHTML = tiles.join("");
 }
 
 // --- team abbreviation / league map (opponent names -> AZ, SD, ...) ---
@@ -623,6 +669,19 @@ async function loadRanks(season, leagueId = 104) {
     get(HIT_RANK_CATS, "hitting"),
     get(PIT_RANK_CATS, "pitching"),
   ]);
+  return { hit, pit };
+}
+
+// --- セイバー指標(fWAR / wRC+ / wOBA / FIP / xFIP)。MLB公式APIの sabermetrics は
+//     FanGraphs 由来のため war の値は fWAR と一致する ---
+async function loadSabermetrics(season) {
+  const one = async group => {
+    try {
+      const d = await fetchJSON(`${API}/people/${PLAYER_ID}/stats?stats=sabermetrics&group=${group}&season=${season}`);
+      return d.stats?.[0]?.splits?.[0]?.stat ?? null;
+    } catch { return null; }
+  };
+  const [hit, pit] = await Promise.all([one("hitting"), one("pitching")]);
   return { hit, pit };
 }
 
@@ -901,23 +960,76 @@ function resetView() {
   $("stamp").textContent = "読み込み中…";
 }
 
-function switchPlayer(id) {
-  const pl = PLAYERS.find(p => p.id === id);
-  if (!pl || id === PLAYER_ID) return;
+// お気に入り(既知の日本人選手)なら日本語名を優先、それ以外は英語名のスタブ
+function playerEntry(id, fallbackName, fallbackPos) {
+  return PLAYERS.find(p => p.id === id)
+    ?? { id, jp: null, en: fallbackName || "", pos: fallbackPos || "", lg: null };
+}
+
+function activatePlayer(pl) {
+  if (!pl || pl.id === PLAYER_ID) return;
   activePlayer = pl;
-  PLAYER_ID = id;
+  PLAYER_ID = pl.id;
   if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
-  try { history.replaceState(null, "", `#${id}`); } catch {}
+  try { history.replaceState(null, "", `#${pl.id}`); } catch {}
   renderTabs();
   resetView();
   window.scrollTo({ top: 0 });
   refresh();
 }
+function switchPlayer(id) { activatePlayer(PLAYERS.find(p => p.id === id)); }
+
+// --- 全選手検索 ---
+let allPlayers = null;
+async function loadAllPlayers() {
+  if (allPlayers) return allPlayers;
+  const year = new Date().getFullYear();
+  for (const season of [year, year - 1]) {
+    try {
+      const data = await fetchJSON(`${API}/sports/1/players?season=${season}`);
+      const list = data.people ?? [];
+      if (list.length) {
+        allPlayers = list.map(p => ({
+          id: p.id, name: p.fullName, pos: p.primaryPosition?.abbreviation ?? "",
+          teamId: p.currentTeam?.id ?? null, norm: (p.fullName || "").toLowerCase(),
+        }));
+        return allPlayers;
+      }
+    } catch {}
+  }
+  allPlayers = allPlayers ?? [];
+  return allPlayers;
+}
+
+async function runSearch(q) {
+  const box = $("searchResults");
+  const query = q.trim().toLowerCase();
+  if (query.length < 2) { box.hidden = true; box.innerHTML = ""; return; }
+  box.hidden = false;
+  box.innerHTML = `<div class="sr-empty">検索中…</div>`;
+  const [list] = await Promise.all([loadAllPlayers(), loadTeamAbbr(new Date().getFullYear())]);
+  const hits = list.filter(p => p.norm.includes(query)).slice(0, 12);
+  if (!hits.length) { box.innerHTML = `<div class="sr-empty">該当する選手がいません</div>`; return; }
+  box.innerHTML = hits.map(p =>
+    `<button class="sr-item" data-id="${p.id}" data-name="${esc(p.name)}" data-pos="${esc(p.pos)}">` +
+    `<span class="sr-name">${esc(p.name)}</span>` +
+    `<span class="sr-meta">${esc(teamAbbr?.[p.teamId] ?? "")}${p.pos ? " ・ " + esc(p.pos) : ""}</span></button>`
+  ).join("");
+}
+
+function closeSearch() { $("searchResults").hidden = true; }
+function pickSearchItem(el) {
+  if (!el) return;
+  activatePlayer(playerEntry(Number(el.dataset.id), el.dataset.name, el.dataset.pos));
+  $("search").value = "";
+  closeSearch();
+}
 
 // --- orchestration ---
 let refreshing = false;
+let pendingRefresh = false;
 async function refresh() {
-  if (refreshing) return;
+  if (refreshing) { pendingRefresh = true; return; } // 更新中の呼び出しは終了後に再実行を予約
   refreshing = true;
   $("refreshBtn").disabled = true;
   const reqId = PLAYER_ID; // 更新中にタブが切り替わったら結果を破棄
@@ -940,11 +1052,12 @@ async function refresh() {
     await loadTeamAbbr(season);
     const leagueId = teamLeague?.[currentTeamId] ?? activePlayer.lg ?? 104;
 
-    const [logs, games, standings, ranks] = await Promise.all([
+    const [logs, games, standings, ranks, saber] = await Promise.all([
       loadGameLogs(season),
       fetchScheduleGames(currentTeamId).catch(() => []),
       loadStandings(season).catch(() => []),
       loadRanks(season, leagueId).catch(() => ({ hit: {}, pit: {} })),
+      loadSabermetrics(season).catch(() => ({ hit: null, pit: null })),
     ]);
     if (reqId !== PLAYER_ID) return;
     const timeByPk = new Map(games.map(g => [g.gamePk, Date.parse(g.gameDate)]));
@@ -955,13 +1068,13 @@ async function refresh() {
     // 打撃カード
     if (showHit && hitStat) {
       $("hitCard").hidden = false;
-      renderHitting(hitStat, season, computeHitDirs(hitStat, logs.hitting, timeByPk), ranks.hit);
+      renderHitting(hitStat, season, computeHitDirs(hitStat, logs.hitting, timeByPk), ranks.hit, saber.hit);
     } else { $("hitCard").hidden = true; }
 
     // 投手カード
     if (showPit && pitStat) {
       $("pitCard").hidden = false;
-      renderPitching(pitStat, season, computePitDirs(pitStat, logs.pitching, timeByPk), ranks.pit);
+      renderPitching(pitStat, season, computePitDirs(pitStat, logs.pitching, timeByPk), ranks.pit, saber.pit);
     } else { $("pitCard").hidden = true; }
 
     // 試合ログ
@@ -989,19 +1102,40 @@ async function refresh() {
   } finally {
     refreshing = false;
     $("refreshBtn").disabled = false;
+    if (pendingRefresh) { pendingRefresh = false; refresh(); } // 予約されていた更新を実行
   }
 }
 
-// 初期化: URLハッシュで選手を指定可能(例: #808967)
+// 初期化: URLハッシュで任意の選手を指定可能(例: #808967)
 const hashId = Number(location.hash.replace("#", ""));
-if (PLAYERS.some(p => p.id === hashId)) {
-  activePlayer = PLAYERS.find(p => p.id === hashId);
+if (hashId) {
+  activePlayer = playerEntry(hashId);
   PLAYER_ID = hashId;
 }
+
 $("tabs").addEventListener("click", e => {
   const b = e.target.closest(".tab");
   if (b) switchPlayer(Number(b.dataset.id));
 });
+
+// 検索
+let searchTimer = null;
+$("search").addEventListener("input", e => {
+  clearTimeout(searchTimer);
+  const v = e.target.value;
+  searchTimer = setTimeout(() => runSearch(v), 200);
+});
+$("searchResults").addEventListener("click", e => {
+  pickSearchItem(e.target.closest(".sr-item"));
+});
+$("search").addEventListener("keydown", e => {
+  if (e.key === "Enter") { e.preventDefault(); pickSearchItem($("searchResults").querySelector(".sr-item")); }
+  else if (e.key === "Escape") { closeSearch(); e.target.blur(); }
+});
+document.addEventListener("click", e => {
+  if (!e.target.closest(".search")) closeSearch();
+});
+
 $("refreshBtn").addEventListener("click", refresh);
 renderTabs();
 resetView();
